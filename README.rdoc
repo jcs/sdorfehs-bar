@@ -4,7 +4,7 @@ http://github.com/downloads/jcs/dzen-jcs/dzen.png
 
 in that screenshot, the modules running are:
 - pidgin (showing an away status with no messages pending)
-- temperature (current / high)
+- weather forecast (current temperature / high temperature)
 - ac status (unplugged, 1st battery 100%, 2nd battery 99%)
 - bluetooth (disabled)
 - wifi (up)

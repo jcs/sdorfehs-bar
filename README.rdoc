@@ -1,7 +1,16 @@
 my status bar for dzen2 running on my openbsd laptop.
 
-http://github.com/downloads/jcs/dzen-jcs/dzen.png
+	http://github.com/downloads/jcs/dzen-jcs/dzen.png
 
-requires:
-	- {dzen 2}[http://sites.google.com/site/gotmor/dzen]
-	- {ruby dbus}[http://rubyforge.org/projects/dbus-ruby]
+in that screenshot, the modules running are:
+- pidgin (showing an away status with no messages pending)
+- temperature (current / high)
+- ac status (unplugged, 1st battery 100%, 2nd battery 99%)
+- bluetooth (disabled)
+- wifi (up)
+- time (fuzzy clock)
+- date
+
+it requires:
+- {dzen 2}[http://sites.google.com/site/gotmor/dzen]
+- {ruby dbus}[http://rubyforge.org/projects/dbus-ruby]

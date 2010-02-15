@@ -1,6 +1,6 @@
 my status bar for dzen2 running on my openbsd laptop.
 
-	http://github.com/downloads/jcs/dzen-jcs/dzen.png
+http://github.com/downloads/jcs/dzen-jcs/dzen.png
 
 in that screenshot, the modules running are:
 - pidgin (showing an away status with no messages pending)

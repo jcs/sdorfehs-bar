@@ -1,0 +1,7 @@
+my status bar for dzen2 running on my openbsd laptop.
+
+http://github.com/downloads/jcs/dzen-jcs/dzen.png
+
+requires:
+	- {dzen 2}[http://sites.google.com/site/gotmor/dzen]
+	- {ruby dbus}[http://rubyforge.org/projects/dbus-ruby]

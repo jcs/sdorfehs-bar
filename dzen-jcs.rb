@@ -87,7 +87,11 @@ def update_every(seconds)
   @cache[c] ||= { :last => nil, :data => nil }
 
   if !@cache[c][:last] || (Time.now.to_i - @cache[c][:last] > seconds)
-    @cache[c][:data] = yield
+    begin
+      @cache[c][:data] = yield
+    rescue
+      @cache[c][:data] = "error"
+    end
     @cache[c][:last] = Time.now.to_i
   end
 

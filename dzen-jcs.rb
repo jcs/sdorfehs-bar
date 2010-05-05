@@ -84,13 +84,16 @@ end
 @cache = {}
 def update_every(seconds)
   c = caller_method_name
-  @cache[c] ||= { :last => nil, :data => nil }
+  @cache[c] ||= { :last => nil, :data => nil, :error => nil }
 
-  if !@cache[c][:last] || (Time.now.to_i - @cache[c][:last] > seconds)
+  if (@cache[c][:error] && (Time.now.to_i - @cache[c][:error] > 15)) ||
+  !@cache[c][:last] || (Time.now.to_i - @cache[c][:last] > seconds)
     begin
       @cache[c][:data] = yield
+      @cache[c][:error] = nil
     rescue
       @cache[c][:data] = "error"
+      @cache[c][:error] = Time.now.to_i
     end
     @cache[c][:last] = Time.now.to_i
   end
@@ -294,27 +297,23 @@ def weather
   update_every(60 * 10) do
     w = ""
 
-    begin
-      xml = REXML::Document.new(Net::HTTP.get(
-        URI.parse("http://www.google.com/ig/api?weather=#{WEATHER_ZIP}")))
+    xml = REXML::Document.new(Net::HTTP.get(
+      URI.parse("http://www.google.com/ig/api?weather=#{WEATHER_ZIP}")))
 
-      w = xml.elements["xml_api_reply"].elements["weather"].
-        elements["current_conditions"].elements["condition"].
-        attributes["data"].downcase
+    w = xml.elements["xml_api_reply"].elements["weather"].
+      elements["current_conditions"].elements["condition"].
+      attributes["data"].downcase
 
-      w += "^fg() " + xml.elements["xml_api_reply"].
-        elements["weather"].elements["current_conditions"].
-        elements["temp_f"].attributes["data"] + "^fg(#{DISABLED})f^fg()"
+    w += "^fg() " + xml.elements["xml_api_reply"].
+      elements["weather"].elements["current_conditions"].
+      elements["temp_f"].attributes["data"] + "^fg(#{DISABLED})f^fg()"
 
-      # don't bother trying to match the day name, just take the first one
-      xml.elements["xml_api_reply"].elements["weather"].
-      elements.each("forecast_conditions") do |fore|
-        w += "^fg(#{DISABLED})/^fg()" +
-          fore.elements["high"].attributes["data"] + "^fg(#{DISABLED})f^fg()"
-        break
-      end
-    rescue => e
-      w = (@cache["weather"][:data] || "weather error")
+    # don't bother trying to match the day name, just take the first one
+    xml.elements["xml_api_reply"].elements["weather"].
+    elements.each("forecast_conditions") do |fore|
+      w += "^fg(#{DISABLED})/^fg()" +
+        fore.elements["high"].attributes["data"] + "^fg(#{DISABLED})f^fg()"
+      break
     end
 
     w

@@ -35,6 +35,9 @@ require "uri"
 
 # config (TODO: pull these from a config file)
 
+# seconds to blink on and off during 1 second
+BLINK = [ 0.85, 0.15 ]
+
 # color of disabled text
 DISABLED = "#aaa"
 
@@ -79,6 +82,55 @@ def parse_caller(at)
     method = Regexp.last_match[3]
     [file, line, method]
   end
+end
+
+# find ^blink() strings and return a stripped out version and a dark version (a
+# regular gsub won't work because we have to track parens)
+def unblink(str)
+  new_str = ""
+  dark_str = ""
+
+  chunk = ""
+  x = 0
+  while x < str.length
+    chunk << str[x .. x]
+    x += 1
+
+    if m = chunk.match(/^(.*)\^blink\($/)
+      new_str << m[1]
+      dark_str << m[1] << "^fg(#{DISABLED})"
+
+      # keep eating characters until we see the closing )
+      opens = 0
+      while x < str.length
+        chr = str[x .. x]
+        x += 1
+
+        if chr == "("
+          opens += 1
+        elsif chr == ")"
+          if opens == 0
+            break
+          else
+            opens -= 1
+          end
+        end
+
+        new_str << chr
+        dark_str << chr
+      end
+
+      dark_str << "^fg()"
+      chunk = ""
+    end
+  end
+
+  if chunk != ""
+    new_str << chunk
+    dark_str << chunk
+  end
+
+  return [ new_str, dark_str ]
 end
 
 @cache = {}
@@ -154,7 +206,7 @@ def pidgin
       sh = PIDGIN_STATUSES[@dbus_pidgin.PurpleSavedstatusGetType(status).first]
 
       "^fg(#{sh[:c]})#{sh[:s]}^fg()" +
-        (unread > 0 ? " ^fg(yellow)(#{unread} unread)^fg()" : "")
+        (unread > 0 ? " ^fg(yellow)^blink((#{unread} unread))^fg()" : "")
     else
       @dbus_purple = @dbus_pidgin = nil
 
@@ -360,8 +412,13 @@ Kernel.trap("INT", "kill_dzen2")
 # the guts
 $dzen = IO.popen("dzen2 -w 700 -x -700 -bg black -fg white -ta r " +
   "-h #{HEIGHT} -fn '*-proggytinysz-medium-' -p", "w+")
+
+# it may take a while for components to start up and cache things, so tell the
+# user
+$dzen.puts "^fg(yellow) starting up ^fg()"
+
 while $dzen do
-  $dzen.puts [
+  output = [
     pidgin,
     weather,
     temp,
@@ -372,5 +429,19 @@ while $dzen do
     date
   ].reject{|part| !part }.join(sep) + "  "
 
-  sleep 1
+  # handle ^blink() internally
+  if output.match(/\^blink\(/)
+    output, dark = unblink(output)
+
+    # flash output, darken it for a brief moment, then show it again
+    $dzen.puts output
+    sleep BLINK.first
+    $dzen.puts dark
+    sleep BLINK.last
+    $dzen.puts output
+  else
+    $dzen.puts output
+
+    sleep 1
+  end
 end

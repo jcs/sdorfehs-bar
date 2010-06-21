@@ -54,7 +54,7 @@ HOURS = [ "midnight", "one", "two", "three", "four", "five", "six", "seven",
 TEMP_MIN = 115
 
 # zipcode to fetch weather for
-WEATHER_ZIP = "85716"
+WEATHER_ZIP = "60642"
 
 # wireless interface
 WIFI_IF = "iwn0"
@@ -363,17 +363,25 @@ def weather
       elements["current_conditions"].elements["condition"].
       attributes["data"].downcase
 
+    # add current temperature
     w += "^fg() " + xml.elements["xml_api_reply"].
       elements["weather"].elements["current_conditions"].
       elements["temp_f"].attributes["data"] + "^fg(#{DISABLED})f^fg()"
 
-    # don't bother trying to match the day name, just take the first one
+    # add today's forecast (don't bother trying to match the day name, just
+    # take the first one)
     xml.elements["xml_api_reply"].elements["weather"].
     elements.each("forecast_conditions") do |fore|
       w += "^fg(#{DISABLED})/^fg()" +
         fore.elements["high"].attributes["data"] + "^fg(#{DISABLED})f^fg()"
       break
     end
+
+    # add current humidity
+    w += " " + xml.elements["xml_api_reply"].
+      elements["weather"].elements["current_conditions"].
+      elements["humidity"].attributes["data"].gsub(/(^Humidity: |\%$)/, "") +
+      "^fg(#{DISABLED})%^fg()"
 
     w
   end

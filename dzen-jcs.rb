@@ -143,7 +143,7 @@ def update_every(seconds)
     begin
       @cache[c][:data] = yield
       @cache[c][:error] = nil
-    rescue
+    rescue StandardError, Timeout::Error
       @cache[c][:data] = "error"
       @cache[c][:error] = Time.now.to_i
     end
@@ -253,18 +253,25 @@ def power
     else
       out = "^fg(#{DISABLED})ac^fg()"
 
+      total_perc = batt_perc.values.inject{|a,b| a + b }
+
       batt_perc.keys.each do |i|
         out += "^fg(#{DISABLED})/"
 
+        blink = false
         if batt_perc[i] <= 10.0
           out += "^fg(red)"
+          if total_perc < 10.0
+            blink = true
+          end
         elsif batt_perc[i] < 30.0
           out += "^fg(yellow)"
         else
           out += "^fg(green)"
         end
 
-        out += sprintf("%d%%", batt_perc[i]) + "^fg()"
+        out += (blink ? "^blink(" : "") +
+          sprintf("%d%%", batt_perc[i]) + (blink ? ")" : "") + "^fg()"
       end
     end
 
@@ -293,7 +300,7 @@ def temp
     fh = (9.0 / 5.0) * (m / temps.length.to_f) + 32.0
 
     if fh > TEMP_MIN
-      "^fg(yellow)#{fh.to_i}^fg(#{DISABLED})f^fg()"
+      "^fg(yellow)^blink(#{fh.to_i})^fg(#{DISABLED})f^fg()"
     else
       nil
     end

@@ -14,3 +14,32 @@ in that screenshot, the modules running are:
 it requires:
 - {dzen 2}[http://sites.google.com/site/gotmor/dzen]
 - {ruby dbus}[http://rubyforge.org/projects/dbus-ruby]
+
+to configure, create a ~/.dzen-jcs.rb file and override $CONFIG settings
+defined in the code.  this file is eval()'d ruby, so you can do anything from
+just setting $CONFIG variables to running arbitrary code.  for instance:
+
+	# dzen bar height
+	$CONFIG[:height] = 20
+
+	# zipcode to fetch weather for
+	$CONFIG[:weather_zip] = 12345
+
+	# find the first wireless interface
+	wifi_int = nil
+    i = IO.popen("/sbin/ifconfig")
+    cur_dev = nil
+    i.readlines.each do |line|
+      if m = line.match(/^([a-z]+\d+): /)
+        cur_dev = m[1]
+      elsif line.match(/IEEE802\.11/)
+		wifi_int = cur_dev
+		break
+      end
+    end
+    i.close
+
+	$CONFIG[:wifi_device] = wifi_int
+
+	# disable pidgin and weather 
+	$CONFIG[:module_order].reject!{|m| m == :pidgin || m == :weather }

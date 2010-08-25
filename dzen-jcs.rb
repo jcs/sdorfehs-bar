@@ -33,41 +33,51 @@ require "net/http"
 require "rexml/document"
 require "uri"
 
-# config (TODO: pull these from a config file)
+$CONFIG = {}
 
 # seconds to blink on and off during 1 second
-BLINK = [ 0.85, 0.15 ]
+$CONFIG[:blink] = [ 0.85, 0.15 ]
 
 # color of disabled text
-DISABLED = "#aaa"
+$CONFIG[:disabled] = "#aaa"
 
 # dzen bar height
-HEIGHT = 17
+$CONFIG[:height] = 17
 
 # hours for fuzzy clock
-HOURS = [ "midnight", "one", "two", "three", "four", "five", "six", "seven",
-  "eight", "nine", "ten", "eleven", "noon", "thirteen", "fourteen", "fifteen",
-  "sixteen", "seventeen", "eighteen", "nineteen", "twenty", "twenty-one",
-  "twenty-two", "twenty-three" ]
+$CONFIG[:hours] = [ "midnight", "one", "two", "three", "four", "five", "six",
+  "seven", "eight", "nine", "ten", "eleven", "noon", "thirteen", "fourteen",
+  "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty",
+  "twenty-one", "twenty-two", "twenty-three" ]
 
 # minimum temperature (f) at which sensors will be shown
-TEMP_MIN = 115
+$CONFIG[:temp_min] = 115
 
 # zipcode to fetch weather for
-WEATHER_ZIP = "60642"
+$CONFIG[:weather_zip] = "60642"
 
 # wireless interface
-WIFI_IF = "iwn0"
+$CONFIG[:wifi_device] = "iwn0"
 
 # pidgin status id->string->color mapping (not available through dbus)
-PIDGIN_STATUSES = {
-  1 => { :s => "offline", :c => DISABLED },
+$CONFIG[:pidgin_statuses] = {
+  1 => { :s => "offline", :c => $CONFIG[:disabled] },
   2 => { :s => "available", :c => "green" },
   3 => { :s => "unavailable", :c => "yellow" },
   4 => { :s => "invisible", :c => "#cccccc" },
   5 => { :s => "away", :c => "#cccccc" },
   6 => { :s => "ext away", :c => "#cccccc" },
 }
+
+# which modules are enabled, and in which order
+$CONFIG[:module_order] = [ :pidgin, :weather, :temp, :power, :bluetooth,
+  :wireless, :time, :date ]
+
+
+# override defaults by eval'ing ~/.dzen-jcs.rb
+if File.exists?(f = "#{ENV['HOME']}/.dzen-jcs.rb")
+  eval(File.read(f))
+end
 
 # helpers
 
@@ -98,7 +108,7 @@ def unblink(str)
 
     if m = chunk.match(/^(.*)\^blink\($/)
       new_str << m[1]
-      dark_str << m[1] << "^fg(#{DISABLED})"
+      dark_str << m[1] << "^fg(#{$CONFIG[:disabled]})"
 
       # keep eating characters until we see the closing )
       opens = 0
@@ -143,8 +153,11 @@ def update_every(seconds)
     begin
       @cache[c][:data] = yield
       @cache[c][:error] = nil
-    rescue StandardError, Timeout::Error
+    rescue Timeout::Error
       @cache[c][:data] = "error"
+      @cache[c][:error] = Time.now.to_i
+    rescue StandardError, DBus::Error => e
+      @cache[c][:data] = "error: #{e.inspect}"
       @cache[c][:error] = Time.now.to_i
     end
     @cache[c][:last] = Time.now.to_i
@@ -168,7 +181,7 @@ def bluetooth
     end
     b.close
 
-    "^fg(#{up ? '' : DISABLED})bt^fg()"
+    "^fg(#{up ? '' : $CONFIG[:disabled]})bt^fg()"
   end
 end
 
@@ -203,14 +216,15 @@ def pidgin
         unread += @dbus_pidgin.PurpleConversationGetData(c, "unseen-count").first
       end
 
-      sh = PIDGIN_STATUSES[@dbus_pidgin.PurpleSavedstatusGetType(status).first]
+      sh = $CONFIG[:pidgin_statuses][
+        @dbus_pidgin.PurpleSavedstatusGetType(status).first]
 
       "^fg(#{sh[:c]})#{sh[:s]}^fg()" +
         (unread > 0 ? " ^fg(yellow)^blink((#{unread} unread))^fg()" : "")
     else
       @dbus_purple = @dbus_pidgin = nil
 
-      "^fg(#{DISABLED})offline^fg()"
+      "^fg(#{$CONFIG[:disabled]})offline^fg()"
     end
   end
 end
@@ -245,18 +259,18 @@ def power
     out = ""
 
     if ac_on
-      out += "^fg(green)ac^fg(#{DISABLED})"
+      out += "^fg(green)ac^fg(#{$CONFIG[:disabled]})"
       batt_perc.keys.each do |i|
         out += sprintf("/%d%%", batt_perc[i])
       end
       out += "^fg()"
     else
-      out = "^fg(#{DISABLED})ac^fg()"
+      out = "^fg(#{$CONFIG[:disabled]})ac^fg()"
 
       total_perc = batt_perc.values.inject{|a,b| a + b }
 
       batt_perc.keys.each do |i|
-        out += "^fg(#{DISABLED})/"
+        out += "^fg(#{$CONFIG[:disabled]})/"
 
         blink = false
         if batt_perc[i] <= 10.0
@@ -299,8 +313,8 @@ def temp
     temps.each{|t| m += t }
     fh = (9.0 / 5.0) * (m / temps.length.to_f) + 32.0
 
-    if fh > TEMP_MIN
-      "^fg(yellow)^blink(#{fh.to_i})^fg(#{DISABLED})f^fg()"
+    if fh > $CONFIG[:temp_min]
+      "^fg(yellow)^blink(#{fh.to_i})^fg(#{$CONFIG[:disabled]})f^fg()"
     else
       nil
     end
@@ -310,7 +324,7 @@ end
 # a fuzzy clock, always rounding up so i'm not late
 def time
   update_every(1) do
-    hour = HOURS[Time.now.hour]
+    hour = $CONFIG[:hours][Time.now.hour]
     mins = Time.now.min
 
     case mins
@@ -331,9 +345,9 @@ def time
       "forty past #{hour}"
     else
       if Time.now.hour == 23
-        hour = HOURS[0]
+        hour = $CONFIG[:hours][0]
       else
-        hour = HOURS[Time.now.hour + 1]
+        hour = $CONFIG[:hours][Time.now.hour + 1]
       end
 
       case mins
@@ -356,32 +370,25 @@ def weather
   update_every(60 * 10) do
     w = ""
 
-    xml = REXML::Document.new(Net::HTTP.get(
-      URI.parse("http://www.google.com/ig/api?weather=#{WEATHER_ZIP}")))
+    xml = REXML::Document.new(Net::HTTP.get(URI.parse(
+      "http://www.google.com/ig/api?weather=#{$CONFIG[:weather_zip]}")))
 
     w = xml.elements["xml_api_reply"].elements["weather"].
       elements["current_conditions"].elements["condition"].
       attributes["data"].downcase
 
     # add current temperature
-    w += "^fg() " + xml.elements["xml_api_reply"].
+    w += " ^fg()" + (cur_temp = xml.elements["xml_api_reply"].
       elements["weather"].elements["current_conditions"].
-      elements["temp_f"].attributes["data"] + "^fg(#{DISABLED})f^fg()"
-
-    # add today's forecast (don't bother trying to match the day name, just
-    # take the first one)
-    xml.elements["xml_api_reply"].elements["weather"].
-    elements.each("forecast_conditions") do |fore|
-      w += "^fg(#{DISABLED})/^fg()" +
-        fore.elements["high"].attributes["data"] + "^fg(#{DISABLED})f^fg()"
-      break
-    end
+      elements["temp_f"].attributes["data"]) + "^fg(#{$CONFIG[:disabled]})f" +
+      "^fg()"
 
     # add current humidity
-    w += " " + xml.elements["xml_api_reply"].
-      elements["weather"].elements["current_conditions"].
-      elements["humidity"].attributes["data"].gsub(/(^Humidity: |\%$)/, "") +
-      "^fg(#{DISABLED})%^fg()"
+    humidity = xml.elements["xml_api_reply"].elements["weather"].
+      elements["current_conditions"].elements["humidity"].
+      attributes["data"].gsub(/(^Humidity: |\%$)/, "").to_i
+    w += "^fg(#{$CONFIG[:disabled]})/^fg(" + (humidity > 60 ? "yellow" : "") +
+      ")" + humidity.to_s + "^fg(#{$CONFIG[:disabled]})%^fg()"
 
     w
   end
@@ -392,7 +399,7 @@ def wireless
   update_every(30) do
     up, connected = false
 
-    i = IO.popen("/sbin/ifconfig #{WIFI_IF} 2>&1")
+    i = IO.popen("/sbin/ifconfig #{$CONFIG[:wifi_device]} 2>&1")
     i.readlines.each do |sc|
       if sc.match(/flags=.*<UP,/)
         up = true
@@ -402,13 +409,14 @@ def wireless
     end
     i.close
 
-    "^fg(#{up ? (connected ? 'green' : '') : DISABLED})wifi^fg()"
+    "^fg(#{up ? (connected ? 'green' : '') : $CONFIG[:disabled]})wifi^fg()"
   end
 end
 
 # separator bar
 def sep
-  "^fg(black)^r(8x1)^fg(#888888)^r(1x#{HEIGHT.to_f/1.35})^fg(black)^r(8x1)^fg()"
+  "^fg(black)^r(8x1)^fg(#888888)^r(1x#{$CONFIG[:height].to_f/1.35})" +
+    "^fg(black)^r(8x1)^fg()"
 end
 
 def kill_dzen2
@@ -426,23 +434,15 @@ Kernel.trap("INT", "kill_dzen2")
 
 # the guts
 $dzen = IO.popen("dzen2 -w 700 -x -700 -bg black -fg white -ta r " +
-  "-h #{HEIGHT} -fn '*-proggytinysz-medium-' -p", "w+")
+  "-h #{$CONFIG[:height]} -fn '*-proggytinysz-medium-' -p", "w+")
 
 # it may take a while for components to start up and cache things, so tell the
 # user
 $dzen.puts "^fg(yellow) starting up ^fg()"
 
 while $dzen do
-  output = [
-    pidgin,
-    weather,
-    temp,
-    power,
-    bluetooth,
-    wireless,
-    time,
-    date
-  ].reject{|part| !part }.join(sep) + "  "
+  output = $CONFIG[:module_order].map{|a| eval(a.to_s) }.reject{|part| !part }.
+    join(sep) + "  "
 
   # handle ^blink() internally
   if output.match(/\^blink\(/)
@@ -450,9 +450,9 @@ while $dzen do
 
     # flash output, darken it for a brief moment, then show it again
     $dzen.puts output
-    sleep BLINK.first
+    sleep $CONFIG[:blink].first
     $dzen.puts dark
-    sleep BLINK.last
+    sleep $CONFIG[:blink].last
     $dzen.puts output
   else
     $dzen.puts output

@@ -56,6 +56,9 @@ $CONFIG[:temp_min] = 115
 # zipcode to fetch weather for
 $CONFIG[:weather_zip] = "60642"
 
+# stocks symbols to watch
+$CONFIG[:stocks] = []
+
 # wireless interface
 $CONFIG[:wifi_device] = "iwn0"
 
@@ -70,9 +73,8 @@ $CONFIG[:pidgin_statuses] = {
 }
 
 # which modules are enabled, and in which order
-$CONFIG[:module_order] = [ :pidgin, :weather, :temp, :power, :bluetooth,
-  :wireless, :time, :date ]
-
+$CONFIG[:module_order] = [ :pidgin, :weather, :stocks, :temp, :power,
+  :bluetooth, :wireless, :time, :date ]
 
 # override defaults by eval'ing ~/.dzen-jcs.rb
 if File.exists?(f = "#{ENV['HOME']}/.dzen-jcs.rb")
@@ -172,16 +174,20 @@ end
 def bluetooth
   update_every(30) do
     up = false
+    present = false
 
     b = IO.popen("/usr/local/sbin/btconfig")
     b.readlines.each do |sc|
       if sc.match(/ubt\d/)
-        up = true
+        present = true
+        if sc.match(/UP/)
+          up = true
+        end
       end
     end
     b.close
 
-    "^fg(#{up ? '' : $CONFIG[:disabled]})bt^fg()"
+    present ? "^fg(#{up ? 'green' : $CONFIG[:disabled]})bt^fg()" : nil
   end
 end
 
@@ -290,6 +296,34 @@ def power
     end
 
     out
+  end
+end
+
+def stocks
+  update_every(60 * 5) do
+    if $CONFIG[:stocks].any?
+      sd = Net::HTTP.get(URI.parse("http://download.finance.yahoo.com/d/" +
+        "quotes.csv?s=" + $CONFIG[:stocks].join("+") + "&f=sp2l1"))
+
+      out = []
+      sd.split("\r\n").each do |line|
+        ticker, change, quote = line.split(",").map{|z| z.gsub(/"/, "") }
+
+        quote = sprintf("%0.2f", quote.to_f)
+
+        if change.gsub(/%/, "").to_f < 0.0
+          color = "red"
+        else
+          color = "green"
+        end
+
+        out.push "#{ticker} ^fg(#{color})#{quote}^fg()"
+      end
+
+      out.join(", ")
+    else
+      nil
+    end
   end
 end
 

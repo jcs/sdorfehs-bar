@@ -1,3 +1,5 @@
+# vim:ts=8:sw=8
+
 my status bar for dzen2 running on my openbsd laptop.
 
 http://github.com/downloads/jcs/dzen-jcs/dzen.png
@@ -10,6 +12,8 @@ in that screenshot, the modules running are:
 - wifi (up)
 - time (fuzzy clock)
 - date
+
+there are some newer modules available in the code.
 
 it requires:
 - {dzen 2}[http://sites.google.com/site/gotmor/dzen]
@@ -27,17 +31,17 @@ just setting $CONFIG variables to running arbitrary code.  for instance:
 
 	# find the first wireless interface
 	wifi_int = nil
-    i = IO.popen("/sbin/ifconfig")
-    cur_dev = nil
-    i.readlines.each do |line|
-      if m = line.match(/^([a-z]+\d+): /)
-        cur_dev = m[1]
-      elsif line.match(/IEEE802\.11/)
-		wifi_int = cur_dev
-		break
-      end
-    end
-    i.close
+	i = IO.popen("/sbin/ifconfig")
+	cur_dev = nil
+	i.readlines.each do |line|
+	  if m = line.match(/^([a-z]+\d+): /)
+	    cur_dev = m[1]
+	  elsif line.match(/IEEE802\.11/)
+	    wifi_int = cur_dev
+	    break
+	  end
+	end
+	i.close
 
 	$CONFIG[:wifi_device] = wifi_int
 

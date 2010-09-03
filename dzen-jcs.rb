@@ -310,7 +310,7 @@ def stocks
         ticker, change, quote = line.split(",").map{|z| z.gsub(/"/, "") }
 
         quote = sprintf("%0.2f", quote.to_f)
-        change.gsub!(/%/, "").to_f
+        change = change.gsub(/%/, "").to_f
 
         color = ""
         if change > 0.0

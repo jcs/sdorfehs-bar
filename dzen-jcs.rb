@@ -44,6 +44,9 @@ $CONFIG[:disabled] = "#aaa"
 # dzen bar height
 $CONFIG[:height] = 17
 
+# font for dzen to use
+$CONFIG[:font] = ""
+
 # hours for fuzzy clock
 $CONFIG[:hours] = [ "midnight", "one", "two", "three", "four", "five", "six",
   "seven", "eight", "nine", "ten", "eleven", "noon", "thirteen", "fourteen",
@@ -57,7 +60,7 @@ $CONFIG[:temp_min] = 115
 $CONFIG[:weather_zip] = "60642"
 
 # stocks symbols to watch
-$CONFIG[:stocks] = []
+$CONFIG[:stocks] = {}
 
 # wireless interface
 $CONFIG[:wifi_device] = "iwn0"
@@ -74,7 +77,7 @@ $CONFIG[:pidgin_statuses] = {
 
 # which modules are enabled, and in which order
 $CONFIG[:module_order] = [ :pidgin, :weather, :stocks, :temp, :power,
-  :bluetooth, :wireless, :time, :date ]
+  :wireless, :time, :date ]
 
 # override defaults by eval'ing ~/.dzen-jcs.rb
 if File.exists?(f = "#{ENV['HOME']}/.dzen-jcs.rb")
@@ -82,6 +85,12 @@ if File.exists?(f = "#{ENV['HOME']}/.dzen-jcs.rb")
 end
 
 # helpers
+
+class NilClass
+  def any?
+    false
+  end
+end
 
 def caller_method_name
   parse_caller(caller(2).first).last
@@ -160,6 +169,7 @@ def update_every(seconds)
       @cache[c][:error] = Time.now.to_i
     rescue StandardError, DBus::Error => e
       @cache[c][:data] = "error: #{e.inspect}"
+      STDERR.puts e.backtrace
       @cache[c][:error] = Time.now.to_i
     end
     @cache[c][:last] = Time.now.to_i
@@ -196,6 +206,50 @@ def date
   update_every(1) do
     # no strftime arg for date without leading zero :(
     (Time.now.strftime("%A #{Date.today.day.to_s} %b")).downcase
+  end
+end
+
+# a fuzzy clock, always rounding up so i'm not late
+def fuzzy_time
+  update_every(1) do
+    hour = $CONFIG[:hours][Time.now.hour]
+    mins = Time.now.min
+
+    case mins
+    when 0 .. 2
+      hour + (hour.match(/midnight|noon/) ? "" : " hour" +
+        (hour == "one" ? "" : "s"))
+    when 3 .. 7
+      "five past #{hour}"
+    when 8 .. 11
+      "ten past #{hour}"
+    when 12 .. 17
+      "quarter past #{hour}"
+    when 16 .. 21
+      "twenty past #{hour}"
+    when 22 .. 36
+      "half past #{hour}"
+    when 37 .. 40
+      "forty past #{hour}"
+    else
+      if Time.now.hour == 23
+        hour = $CONFIG[:hours][0]
+      else
+        hour = $CONFIG[:hours][Time.now.hour + 1]
+      end
+
+      case mins
+      when 41 .. 49
+        "quarter to #{hour}"
+      when 50 .. 53
+        "ten to #{hour}"
+      when 54 .. 55
+        "five to #{hour}"
+      else
+        hour + (hour.match(/midnight|noon/) ? "" : " hour" +
+          (hour == "one" ? "" : "s"))
+      end
+    end
   end
 end
 
@@ -303,7 +357,7 @@ def stocks
   update_every(60 * 5) do
     if $CONFIG[:stocks].any?
       sd = Net::HTTP.get(URI.parse("http://download.finance.yahoo.com/d/" +
-        "quotes.csv?s=" + $CONFIG[:stocks].join("+") + "&f=sp2l1"))
+        "quotes.csv?s=" + $CONFIG[:stocks].keys.join("+") + "&f=sp2l1"))
 
       out = []
       sd.split("\r\n").each do |line|
@@ -313,7 +367,9 @@ def stocks
         change = change.gsub(/%/, "").to_f
 
         color = ""
-        if change > 0.0
+        if quote.to_f >= $CONFIG[:stocks][ticker].to_f
+          color = "yellow"
+        elsif change > 0.0
           color = "green"
         elsif change < 0.0
           color = "red"
@@ -357,47 +413,9 @@ def temp
   end
 end
 
-# a fuzzy clock, always rounding up so i'm not late
 def time
   update_every(1) do
-    hour = $CONFIG[:hours][Time.now.hour]
-    mins = Time.now.min
-
-    case mins
-    when 0 .. 2
-      hour + (hour.match(/midnight|noon/) ? "" : " hour" +
-        (hour == "one" ? "" : "s"))
-    when 3 .. 7
-      "five past #{hour}"
-    when 8 .. 11
-      "ten past #{hour}"
-    when 12 .. 17
-      "quarter past #{hour}"
-    when 16 .. 21
-      "twenty past #{hour}"
-    when 22 .. 36
-      "half past #{hour}"
-    when 37 .. 40
-      "forty past #{hour}"
-    else
-      if Time.now.hour == 23
-        hour = $CONFIG[:hours][0]
-      else
-        hour = $CONFIG[:hours][Time.now.hour + 1]
-      end
-
-      case mins
-      when 41 .. 49
-        "quarter to #{hour}"
-      when 50 .. 53
-        "ten to #{hour}"
-      when 54 .. 55
-        "five to #{hour}"
-      else
-        hour + (hour.match(/midnight|noon/) ? "" : " hour" +
-          (hour == "one" ? "" : "s"))
-      end
-    end
+    Time.now.strftime("%H:%M")
   end
 end
 
@@ -470,7 +488,8 @@ Kernel.trap("INT", "kill_dzen2")
 
 # the guts
 $dzen = IO.popen("dzen2 -w 700 -x -700 -bg black -fg white -ta r " +
-  "-h #{$CONFIG[:height]} -fn '*-proggytinysz-medium-' -p", "w+")
+  "-h #{$CONFIG[:height]} " + ($CONFIG[:font].any? ?
+  "-fn '#{$CONFIG[:font]}'" : "") + " -p", "w+")
 
 # it may take a while for components to start up and cache things, so tell the
 # user

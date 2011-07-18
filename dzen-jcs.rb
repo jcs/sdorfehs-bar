@@ -54,7 +54,7 @@ $CONFIG[:hours] = [ "midnight", "one", "two", "three", "four", "five", "six",
   "twenty-one", "twenty-two", "twenty-three" ]
 
 # minimum temperature (f) at which sensors will be shown
-$CONFIG[:temp_min] = 115
+$CONFIG[:temp_min] = 138
 
 # zipcode to fetch weather for
 $CONFIG[:weather_zip] = "60642"
@@ -76,7 +76,7 @@ $CONFIG[:pidgin_statuses] = {
 }
 
 # which modules are enabled, and in which order
-$CONFIG[:module_order] = [ :pidgin, :weather, :stocks, :temp, :power,
+$CONFIG[:module_order] = [ :weather, :stocks, :temp, :power,
   :wireless, :time, :date ]
 
 # override defaults by eval'ing ~/.dzen-jcs.rb
@@ -298,9 +298,9 @@ def power
     s = IO.popen("/usr/sbin/sysctl hw.sensors.acpibat0 hw.sensors.acpibat1 " +
       "hw.sensors.acpiac0")
     s.readlines.each do |sc|
-      if m = sc.match(/acpibat(\d)\.watthour.=([\d\.]+) Wh .last full/)
+      if m = sc.match(/acpibat(\d)\.amphour.=([\d\.]+) Ah .last full/)
         batt_max[m[1].to_i] = m[2].to_f
-      elsif m = sc.match(/acpibat(\d)\.watthour.=([\d\.]+) Wh .remaining capacity/)
+      elsif m = sc.match(/acpibat(\d)\.amphour.=([\d\.]+) Ah .remaining capacity/)
         batt_left[m[1].to_i] = m[2].to_f
       elsif m = sc.match(/acpiac.\.indicator0=On/)
         ac_on = true
@@ -389,14 +389,11 @@ end
 def temp
   update_every(30) do
     temps = []
-    fanrpm = ""
 
-    s = IO.popen("/usr/sbin/sysctl hw.sensors.acpithinkpad0")
+    s = IO.popen("/usr/sbin/sysctl hw.sensors.acpitz0.temp0")
     s.readlines.each do |sc|
       if m = sc.match(/temp\d=([\d\.]+) degC/)
         temps.push m[1].to_f
-      elsif m = sc.match(/fan0=(\d+) /)
-        fanrpm = m[1].to_i
       end
     end
     s.close

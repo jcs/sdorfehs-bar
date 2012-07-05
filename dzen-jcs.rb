@@ -92,6 +92,12 @@ class NilClass
   end
 end
 
+class String
+  def any?
+    !empty?
+  end
+end
+
 def caller_method_name
   parse_caller(caller(2).first).last
 end
@@ -295,12 +301,11 @@ def power
     batt_max = batt_left = batt_perc = {}, {}, {}
     ac_on = false
 
-    s = IO.popen("/usr/sbin/sysctl hw.sensors.acpibat0 hw.sensors.acpibat1 " +
-      "hw.sensors.acpiac0")
+    s = IO.popen("/usr/sbin/sysctl hw.sensors")
     s.readlines.each do |sc|
-      if m = sc.match(/acpibat(\d)\.amphour.=([\d\.]+) Ah .last full/)
+      if m = sc.match(/acpibat(\d)\.watthour.=([\d\.]+) Wh .last full/)
         batt_max[m[1].to_i] = m[2].to_f
-      elsif m = sc.match(/acpibat(\d)\.amphour.=([\d\.]+) Ah .remaining capacity/)
+      elsif m = sc.match(/acpibat(\d)\.watthour.=([\d\.]+) Wh .remaining cap/)
         batt_left[m[1].to_i] = m[2].to_f
       elsif m = sc.match(/acpiac.\.indicator0=On/)
         ac_on = true

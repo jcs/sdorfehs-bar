@@ -57,7 +57,7 @@ $CONFIG[:hours] = [ "midnight", "one", "two", "three", "four", "five", "six",
 $CONFIG[:temp_min] = 138
 
 # zipcode to fetch weather for
-$CONFIG[:weather_zip] = "60642"
+$CONFIG[:weather_zip] = "60622"
 
 # stocks symbols to watch
 $CONFIG[:stocks] = {}
@@ -76,8 +76,8 @@ $CONFIG[:pidgin_statuses] = {
 }
 
 # which modules are enabled, and in which order
-$CONFIG[:module_order] = [ :weather, :stocks, :temp, :power,
-  :wireless, :time, :date ]
+$CONFIG[:module_order] = [ :weather, :stocks, :temp, :power, :wireless, :time,
+  :date ]
 
 # override defaults by eval'ing ~/.dzen-jcs.rb
 if File.exists?(f = "#{ENV['HOME']}/.dzen-jcs.rb")
@@ -173,7 +173,7 @@ def update_every(seconds)
     rescue Timeout::Error
       @cache[c][:data] = "error"
       @cache[c][:error] = Time.now.to_i
-    rescue StandardError, DBus::Error => e
+    rescue StandardError => e
       @cache[c][:data] = "error: #{e.inspect}"
       STDERR.puts e.backtrace
       @cache[c][:error] = Time.now.to_i
@@ -263,7 +263,15 @@ end
 # any unread messages pending
 def pidgin
   update_every(1) do
-    @dbus_session ||= DBus::SessionBus.instance
+    begin
+      @dbus_session ||= DBus::SessionBus.instance
+    rescue => e
+      if e.message.match(/undefined method .split/)
+        return "error: dbus not running"
+      else
+        raise e
+      end
+    end
 
     # check whether pidgin is running first, otherwise talking to it will start
     # it up
@@ -417,7 +425,7 @@ end
 
 def time
   update_every(1) do
-    Time.now.strftime("%H:%M")
+    Time.now.strftime("%H^blink(:)%M")
   end
 end
 
@@ -427,22 +435,19 @@ def weather
     w = ""
 
     xml = REXML::Document.new(Net::HTTP.get(URI.parse(
-      "http://www.google.com/ig/api?weather=#{$CONFIG[:weather_zip]}")))
+      "http://weather.yahooapis.com/forecastrss?p=#{$CONFIG[:weather_zip]}")))
 
-    w = xml.elements["xml_api_reply"].elements["weather"].
-      elements["current_conditions"].elements["condition"].
-      attributes["data"].downcase
+    w = xml.elements["rss"].elements["channel"].elements["item"].
+      elements["yweather:condition"].attributes["text"].downcase
 
     # add current temperature
-    w += " ^fg()" + (cur_temp = xml.elements["xml_api_reply"].
-      elements["weather"].elements["current_conditions"].
-      elements["temp_f"].attributes["data"]) + "^fg(#{$CONFIG[:disabled]})f" +
-      "^fg()"
+    w += " ^fg()" + (xml.elements["rss"].elements["channel"].elements["item"].
+      elements["yweather:condition"].attributes["temp"]) +
+      "^fg(#{$CONFIG[:disabled]})f^fg()"
 
     # add current humidity
-    humidity = xml.elements["xml_api_reply"].elements["weather"].
-      elements["current_conditions"].elements["humidity"].
-      attributes["data"].gsub(/(^Humidity: |\%$)/, "").to_i
+    humidity = xml.elements["rss"].elements["channel"].
+      elements["yweather:atmosphere"].attributes["humidity"].to_i
     w += "^fg(#{$CONFIG[:disabled]})/^fg(" + (humidity > 60 ? "yellow" : "") +
       ")" + humidity.to_s + "^fg(#{$CONFIG[:disabled]})%^fg()"
 

@@ -64,10 +64,10 @@ $CONFIG[:weather_zip] = "60622"
 # stocks symbols to watch
 $CONFIG[:stocks] = {}
 
-# wireless interface
+# wireless interface when not using i3status
 $CONFIG[:wifi_device] = "iwn0"
 
-# ethernet interface
+# ethernet interface when not using i3status
 $CONFIG[:eth_device] = "em0"
 
 # pidgin status id->string->color mapping (not available through dbus)
@@ -479,7 +479,7 @@ end
 
 def time
   update_every(1) do
-    Time.now.strftime("%H^blink(:)%M")
+    Time.now.strftime("%H:%M")
   end
 end
 
@@ -514,13 +514,21 @@ def network
   update_every($CONFIG[:use_i3status] ? $CONFIG[:i3status_poll] : 30) do
     wifi_up = false
     wifi_connected = false
+    wifi_signal = 0
     eth_connected = false
 
     if $CONFIG[:use_i3status]
-      if m = $i3status_cache[:wireless].to_s.match(/^up\|((\d+) dBm|\?)?$/)
+      if m = $i3status_cache[:wireless].to_s.match(/^up\|(.+)$/)
         wifi_up = true
-        wifi_connected = !(m[1] == "?")
-        # TODO: show signal strength somehow?
+
+        if m[1] == "?"
+          wifi_connected = false
+        else
+          wifi_connected = true
+          if n = m[1].match(/(\d+)%/)
+            wifi_signal = n[1].to_i
+          end
+        end
       end
 
       if $i3status_cache[:ethernet].to_s.match(/up/)
@@ -538,25 +546,55 @@ def network
             else
               eth_connected = true
             end
+          elsif m = sc.match(/bssid [^ ]* (\d+)% /)
+            wifi_signal = m[1].to_i
           end
         end
         i.close
       end
     end
 
-    if wifi_connected && eth_connected
-      "^fg(green)wifi^fg(#{$CONFIG[:disabled]}), ^fg(green)eth^fg()"
-    elsif wifi_connected
-      "^fg(green)wifi^fg()"
-    elsif wifi_up && eth_connected
-      "^fg(#{$CONFIG[:disabled]})wifi, ^fg(green)eth^fg()"
-    elsif wifi_up && !eth_connected
-      "^fg(#{$CONFIG[:disabled]})wifi^fg()"
-    elsif eth_connected
-      "^fg(green)eth^fg()"
-    else
-      nil
+    wi = ""
+    eth = ""
+
+    if wifi_connected
+      wi = "^fg(green)wifi"
+
+      if wifi_signal > 0
+        wi << "^fg(#{$CONFIG[:disabled]})/"
+
+        if wifi_signal >= 75
+          wi << "^fg(green)"
+        elsif wifi_signal >= 50
+          wi << "^fg(yellow)"
+        else
+          wi << "^fg(orange)"
+        end
+        # will probably never have 100% signal
+        wi << sprintf("%2.0d", wifi_signal) <<
+          "^fg(#{$CONFIG[:disabled]})%^fg()"
+      end
+    elsif wifi_up
+      wi = "^fg(#{$CONFIG[:disabled]})wifi^fg()"
     end
+
+    if eth_connected
+      eth = "^fg(green)eth^fg()"
+    end
+
+    out = nil
+    if wi != ""
+      out = wi
+    end
+    if eth != ""
+      if out
+        out << "^fg(#{$CONFIG[:disabled]}), " << eth
+      else
+        out = eth
+      end
+    end
+
+    out
   end
 end
 
@@ -584,11 +622,19 @@ Kernel.trap("QUIT", "cleanup")
 Kernel.trap("TERM", "cleanup")
 Kernel.trap("INT", "cleanup")
 
+# find the screen resolution so we can pass a proper -x value to dzen2 (newer
+# versions can do -x -700)
+width = `/usr/X11R6/bin/xwininfo -root`.split("\n").select{|l|
+  l.match(/-geometry/) }.first.to_s.gsub(/.* /, "").gsub(/x.*/, "").to_i
+if width == 0
+  width = 1366
+end
+
 # bring up a writer to dzen
 $dzen = IO.popen([
   "dzen2",
+  "-x", (width - 700).to_s,
   "-w", "700",
-  "-x", "-700",
   "-bg", "black",
   "-fg", "white",
   "-ta", "r",
@@ -613,7 +659,7 @@ while $dzen do
   if $i3status
     while IO.select([ $i3status ], nil, nil, 0.1)
       # [{"name":"wireless","instance":"iwn0","full_text":"up|166 dBm"},...
-      if m = $i3status.gets.match(/^,?(\[\{.*)/)
+      if m = $i3status.gets.to_s.match(/^,?(\[\{.*)/)
         $i3status_cache = {}
         JSON.parse(m[1]).each do |mod|
           $i3status_cache[mod["name"].to_sym] = mod["full_text"]

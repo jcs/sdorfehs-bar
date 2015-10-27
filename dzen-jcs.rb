@@ -41,13 +41,19 @@ $CONFIG = {}
 $CONFIG[:blink] = [ 0.85, 0.15 ]
 
 # color of disabled text
-$CONFIG[:disabled] = "#aaa"
+$CONFIG[:disabled] = "gray40"
 
 # dzen bar height
-$CONFIG[:height] = 17
+$CONFIG[:height] = 36
 
 # font for dzen to use
-$CONFIG[:font] = ""
+$CONFIG[:font] = "dejavu sans mono:size=5.5"
+
+# background color if not black
+$CONFIG[:bg] = "gray20"
+
+# default text color if not white
+$CONFIG[:fg] = "gray70"
 
 # hours for fuzzy clock
 $CONFIG[:hours] = [ "midnight", "one", "two", "three", "four", "five", "six",
@@ -600,8 +606,8 @@ end
 
 # separator bar
 def sep
-  "^fg(black)^r(8x1)^fg(#888888)^r(1x#{$CONFIG[:height].to_f/1.35})" +
-    "^fg(black)^r(8x1)^fg()"
+  "^fg(#{$CONFIG[:bg]})^r(8x1)^fg(#777)^r(1x#{$CONFIG[:height].to_f/1.35})" +
+    "^fg(#{$CONFIG[:bg]})^r(8x1)^fg()"
 end
 
 # kill dzen2/i3status when we die
@@ -635,8 +641,8 @@ $dzen = IO.popen([
   "dzen2",
   "-x", (width - 700).to_s,
   "-w", "700",
-  "-bg", "black",
-  "-fg", "white",
+  "-bg", $CONFIG[:bg].any? ? $CONFIG[:bg] : "black",
+  "-fg", $CONFIG[:fg].any? ? $CONFIG[:fg] : "white",
   "-ta", "r",
   "-h", $CONFIG[:height].to_s,
   "-fn", $CONFIG[:font].any? ? $CONFIG[:font] : "fixed",

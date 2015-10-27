@@ -655,6 +655,11 @@ end
 $dzen.puts "^fg(yellow) starting up ^fg()"
 
 while $dzen do
+  if IO.select([ $dzen ], nil, nil, 0.1)
+    cleanup
+    exit
+  end
+
   # read all input from i3status, use last line of input
   if $i3status
     while IO.select([ $i3status ], nil, nil, 0.1)

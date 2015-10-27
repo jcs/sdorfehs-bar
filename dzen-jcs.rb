@@ -40,29 +40,25 @@ $CONFIG = {}
 # seconds to blink on and off during 1 second
 $CONFIG[:blink] = [ 0.85, 0.15 ]
 
-# color of disabled text
-$CONFIG[:disabled] = "gray40"
-
 # dzen bar height
-$CONFIG[:height] = 36
+$CONFIG[:height] = 38
 
 # font for dzen to use
 $CONFIG[:font] = "dejavu sans mono:size=5.5"
 
-# background color if not black
-$CONFIG[:bg] = "gray20"
-
-# default text color if not white
-$CONFIG[:fg] = "gray70"
-
-# hours for fuzzy clock
-$CONFIG[:hours] = [ "midnight", "one", "two", "three", "four", "five", "six",
-  "seven", "eight", "nine", "ten", "eleven", "noon", "thirteen", "fourteen",
-  "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty",
-  "twenty-one", "twenty-two", "twenty-three" ]
+$CONFIG[:colors] = {
+  :bg => "black",
+  :fg => "white",
+  :disabled => "gray40",
+  :sep => "#888",
+  :ok => "green",
+  :warn => "orange",
+  :alert => "yellow",
+  :emerg => "red",
+}
 
 # minimum temperature (f) at which sensors will be shown
-$CONFIG[:temp_min] = 138
+$CONFIG[:temp_min] = 155
 
 # zipcode to fetch weather for
 $CONFIG[:weather_zip] = "60622"
@@ -78,9 +74,9 @@ $CONFIG[:eth_device] = "em0"
 
 # pidgin status id->string->color mapping (not available through dbus)
 $CONFIG[:pidgin_statuses] = {
-  1 => { :s => "offline", :c => $CONFIG[:disabled] },
-  2 => { :s => "available", :c => "green" },
-  3 => { :s => "unavailable", :c => "yellow" },
+  1 => { :s => "offline", :c => $CONFIG[:colors][:disabled] },
+  2 => { :s => "available", :c => $CONFIG[:colors][:ok] },
+  3 => { :s => "unavailable", :c => $CONFIG[:colors][:alert] },
   4 => { :s => "invisible", :c => "#cccccc" },
   5 => { :s => "away", :c => "#cccccc" },
   6 => { :s => "ext away", :c => "#cccccc" },
@@ -173,7 +169,7 @@ def unblink(str)
 
     if m = chunk.match(/^(.*)\^blink\($/)
       new_str << m[1]
-      dark_str << m[1] << "^fg(#{$CONFIG[:disabled]})"
+      dark_str << m[1] << "^fg(#{$CONFIG[:colors][:disabled]})"
 
       # keep eating characters until we see the closing )
       opens = 0
@@ -251,7 +247,7 @@ def bluetooth
     end
     b.close
 
-    present ? "^fg(#{up ? 'green' : $CONFIG[:disabled]})bt^fg()" : nil
+    present ? "^fg(#{up ? 'green' : $CONFIG[:colors][:disabled]})bt^fg()" : nil
   end
 end
 
@@ -260,50 +256,6 @@ def date
   update_every(1) do
     # no strftime arg for date without leading zero :(
     (Time.now.strftime("%A #{Date.today.day.to_s} %b")).downcase
-  end
-end
-
-# a fuzzy clock, always rounding up so i'm not late
-def fuzzy_time
-  update_every(1) do
-    hour = $CONFIG[:hours][Time.now.hour]
-    mins = Time.now.min
-
-    case mins
-    when 0 .. 2
-      hour + (hour.match(/midnight|noon/) ? "" : " hour" +
-        (hour == "one" ? "" : "s"))
-    when 3 .. 7
-      "five past #{hour}"
-    when 8 .. 11
-      "ten past #{hour}"
-    when 12 .. 17
-      "quarter past #{hour}"
-    when 16 .. 21
-      "twenty past #{hour}"
-    when 22 .. 36
-      "half past #{hour}"
-    when 37 .. 40
-      "forty past #{hour}"
-    else
-      if Time.now.hour == 23
-        hour = $CONFIG[:hours][0]
-      else
-        hour = $CONFIG[:hours][Time.now.hour + 1]
-      end
-
-      case mins
-      when 41 .. 49
-        "quarter to #{hour}"
-      when 50 .. 53
-        "ten to #{hour}"
-      when 54 .. 55
-        "five to #{hour}"
-      else
-        hour + (hour.match(/midnight|noon/) ? "" : " hour" +
-          (hour == "one" ? "" : "s"))
-      end
-    end
   end
 end
 
@@ -341,12 +293,13 @@ def pidgin
       sh = $CONFIG[:pidgin_statuses][
         @dbus_pidgin.PurpleSavedstatusGetType(status).first]
 
-      "^fg(#{sh[:c]})#{sh[:s]}^fg()" +
-        (unread > 0 ? " ^fg(yellow)^blink((#{unread} unread))^fg()" : "")
+      "^fg(#{sh[:c]})#{sh[:s]}^fg()" <<
+        (unread > 0 ? " ^fg(#{$CONFIG[:colors][:alert]})" <<
+        "^blink((#{unread} unread))^fg()" : "")
     else
       @dbus_purple = @dbus_pidgin = nil
 
-      "^fg(#{$CONFIG[:disabled]})offline^fg()"
+      "^fg(#{$CONFIG[:colors][:disabled]})offline^fg()"
     end
   end
 end
@@ -387,32 +340,32 @@ def power
     out = ""
 
     if ac_on
-      out += "^fg(green)ac^fg(#{$CONFIG[:disabled]})"
+      out << "^fg(green)ac^fg(#{$CONFIG[:colors][:disabled]})"
       batt_perc.keys.each do |i|
-        out += sprintf("/%d%%", batt_perc[i])
+        out << sprintf("/%d%%", batt_perc[i])
       end
-      out += "^fg()"
+      out << "^fg()"
     else
-      out = "^fg(#{$CONFIG[:disabled]})ac^fg()"
+      out = "^fg(#{$CONFIG[:colors][:disabled]})ac^fg()"
 
       total_perc = batt_perc.values.inject{|a,b| a + b }
 
       batt_perc.keys.each do |i|
-        out += "^fg(#{$CONFIG[:disabled]})/"
+        out << "^fg(#{$CONFIG[:colors][:disabled]})/"
 
         blink = false
         if batt_perc[i] <= 10.0
-          out += "^fg(red)"
+          out << "^fg(#{$CONFIG[:colors][:emerg]})"
           if total_perc < 10.0
             blink = true
           end
         elsif batt_perc[i] < 30.0
-          out += "^fg(yellow)"
+          out << "^fg(#{$CONFIG[:colors][:alert]})"
         else
-          out += "^fg(green)"
+          out << "^fg(#{$CONFIG[:colors][:ok]})"
         end
 
-        out += (blink ? "^blink(" : "") +
+        out << (blink ? "^blink(" : "") +
           sprintf("%d%%", batt_perc[i]) + (blink ? ")" : "") + "^fg()"
       end
     end
@@ -437,11 +390,11 @@ def stocks
 
         color = ""
         if quote.to_f >= $CONFIG[:stocks][ticker].to_f
-          color = "yellow"
+          color = $CONFIG[:colors][:alert]
         elsif change > 0.0
-          color = "green"
+          color = $CONFIG[:colors][:ok]
         elsif change < 0.0
-          color = "red"
+          color = $CONFIG[:colors][:emerg]
         end
 
         out.push "#{ticker} ^fg(#{color})#{quote}^fg()"
@@ -476,7 +429,8 @@ def temp
     fh = (9.0 / 5.0) * (m / temps.length.to_f) + 32.0
 
     if fh > $CONFIG[:temp_min]
-      "^fg(yellow)^blink(#{fh.to_i})^fg(#{$CONFIG[:disabled]})f^fg()"
+      "^fg(#{$CONFIG[:colors][:alert]})^blink(#{fh.to_i})" <<
+        "^fg(#{$CONFIG[:colors][:disabled]})f^fg()"
     else
       nil
     end
@@ -497,19 +451,20 @@ def weather
     xml = REXML::Document.new(Net::HTTP.get(URI.parse(
       "http://weather.yahooapis.com/forecastrss?p=#{$CONFIG[:weather_zip]}")))
 
-    w = xml.elements["rss"].elements["channel"].elements["item"].
+    w << xml.elements["rss"].elements["channel"].elements["item"].
       elements["yweather:condition"].attributes["text"].downcase
 
     # add current temperature
-    w += " ^fg()" + (xml.elements["rss"].elements["channel"].elements["item"].
-      elements["yweather:condition"].attributes["temp"]) +
-      "^fg(#{$CONFIG[:disabled]})f^fg()"
+    w << " ^fg()" << (xml.elements["rss"].elements["channel"].elements["item"].
+      elements["yweather:condition"].attributes["temp"]) <<
+      "^fg(#{$CONFIG[:colors][:disabled]})f^fg()"
 
     # add current humidity
     humidity = xml.elements["rss"].elements["channel"].
       elements["yweather:atmosphere"].attributes["humidity"].to_i
-    w += "^fg(#{$CONFIG[:disabled]})/^fg(" + (humidity > 60 ? "yellow" : "") +
-      ")" + humidity.to_s + "^fg(#{$CONFIG[:disabled]})%^fg()"
+    w << "^fg(#{$CONFIG[:colors][:disabled]})/^fg(" <<
+      (humidity > 60 ? $CONFIG[:colors][:alert] : "") <<
+      ")" << humidity.to_s << "^fg(#{$CONFIG[:colors][:disabled]})%^fg()"
 
     w
   end
@@ -570,18 +525,18 @@ def network
         wi << "^fg(#{$CONFIG[:disabled]})/"
 
         if wifi_signal >= 75
-          wi << "^fg(green)"
+          wi << "^fg(#{$CONFIG[:colors][:ok]})"
         elsif wifi_signal >= 50
-          wi << "^fg(yellow)"
+          wi << "^fg(#{$CONFIG[:colors][:alert]})"
         else
-          wi << "^fg(orange)"
+          wi << "^fg(#{$CONFIG[:colors][:warn]})"
         end
         # will probably never have 100% signal
         wi << sprintf("%2.0d", wifi_signal) <<
-          "^fg(#{$CONFIG[:disabled]})%^fg()"
+          "^fg(#{$CONFIG[:colors][:disabled]})%^fg()"
       end
     elsif wifi_up
-      wi = "^fg(#{$CONFIG[:disabled]})wifi^fg()"
+      wi = "^fg(#{$CONFIG[:colors][:disabled]})wifi^fg()"
     end
 
     if eth_connected
@@ -594,7 +549,7 @@ def network
     end
     if eth != ""
       if out
-        out << "^fg(#{$CONFIG[:disabled]}), " << eth
+        out << "^fg(#{$CONFIG[:colors][:disabled]}), " << eth
       else
         out = eth
       end
@@ -606,8 +561,9 @@ end
 
 # separator bar
 def sep
-  "^fg(#{$CONFIG[:bg]})^r(8x1)^fg(#777)^r(1x#{$CONFIG[:height].to_f/1.35})" +
-    "^fg(#{$CONFIG[:bg]})^r(8x1)^fg()"
+  "^fg(#{$CONFIG[:colors][:bg]})^r(16x1)^fg(#{$CONFIG[:colors][:sep]})" <<
+    "^r(1x#{$CONFIG[:height].to_f/1.35})^fg(#{$CONFIG[:colors][:bg]})" <<
+    "^r(16x1)^fg()"
 end
 
 # kill dzen2/i3status when we die
@@ -641,11 +597,11 @@ $dzen = IO.popen([
   "dzen2",
   "-x", (width - 700).to_s,
   "-w", "700",
-  "-bg", $CONFIG[:bg].any? ? $CONFIG[:bg] : "black",
-  "-fg", $CONFIG[:fg].any? ? $CONFIG[:fg] : "white",
+  "-bg", $CONFIG[:colors][:bg],
+  "-fg", $CONFIG[:colors][:fg],
   "-ta", "r",
   "-h", $CONFIG[:height].to_s,
-  "-fn", $CONFIG[:font].any? ? $CONFIG[:font] : "fixed",
+  "-fn", $CONFIG[:font],
   "-p"
 ], "w+")
 
@@ -658,7 +614,7 @@ end
 
 # it may take a while for components to start up and cache things, so tell the
 # user
-$dzen.puts "^fg(yellow) starting up ^fg()"
+$dzen.puts "^fg(#{$CONFIG[:colors][:alert]}) starting up ^fg()"
 
 while $dzen do
   if IO.select([ $dzen ], nil, nil, 0.1)
@@ -681,7 +637,7 @@ while $dzen do
 
   # build output by concatting each module's output
   output = $CONFIG[:module_order].map{|a| eval(a.to_s) }.reject{|part| !part }.
-    join(sep) + "  "
+    join(sep) << "  "
 
   # handle ^blink() internally
   if output.match(/\^blink\(/)

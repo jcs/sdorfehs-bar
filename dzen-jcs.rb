@@ -1,9 +1,9 @@
 #!/usr/bin/env ruby
 #
-# a script to gather data on an openbsd laptop (optionally from i3status) and
+# a script to parse i3status output along with some other optional modules, and
 # pipe it to dzen2
 #
-# Copyright (c) 2009-2012 joshua stein <jcs@jcs.org>
+# Copyright (c) 2009-2015 joshua stein <jcs@jcs.org>
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -27,6 +27,43 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 # THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# requires an ~/.i3status.conf with:
+# general {
+#     output_format = "i3bar"
+#     colors = false
+#     interval = 5
+# }
+#
+# order += "wireless iwn0"
+# order += "ethernet em0"
+# order += "battery 0"
+# order += "cpu_temperature acpithinkpad0"
+# order += "volume master"
+#
+# cpu_temperature acpithinkpad0 {
+#     format = "%degrees"
+# }
+#
+# wireless iwn0 {
+#     format_up = "up|%signal"
+#     format_down = "down"
+# }
+#
+# ethernet em0 {
+#     format_up = "up"
+#     format_down = "down"
+# }
+#
+# battery 0 {
+#     format = "%status|%percentage"
+# }
+#
+# volume master {
+#     format = "%volume"
+#     format_muted = "muted %volume"
+#     mixer = "outputs.master"
+# }
 
 require "date"
 require "dbus"
@@ -66,12 +103,6 @@ $CONFIG[:weather_zip] = "60622"
 # stocks symbols to watch
 $CONFIG[:stocks] = {}
 
-# wireless interface when not using i3status
-$CONFIG[:wifi_device] = "iwn0"
-
-# ethernet interface when not using i3status
-$CONFIG[:eth_device] = "em0"
-
 # pidgin status id->string->color mapping (not available through dbus)
 $CONFIG[:pidgin_statuses] = {
   1 => { :s => "offline", :c => $CONFIG[:colors][:disabled] },
@@ -82,46 +113,14 @@ $CONFIG[:pidgin_statuses] = {
   6 => { :s => "ext away", :c => "#cccccc" },
 }
 
-# whether to use i3status for temp, power, and wireless (avoids shelling out)
-# requires an ~/.i3status.conf with:
-# general {
-#     output_format = "i3bar"
-#     colors = false
-#     interval = 5
-# }
-# 
-# order += "wireless iwn0"
-# order += "ethernet em0"
-# order += "battery 0"
-# order += "cpu_temperature acpithinkpad0"
-# 
-# cpu_temperature acpithinkpad0 {
-#     format = "%degrees"
-# }
-# 
-# wireless iwn0 {
-#     format_up = "up|%signal"
-#     format_down = "down"
-# }
-# 
-# ethernet em0 {
-#     format_up = "up"
-#     format_down = "down"
-# }
-# 
-# battery 0 {
-#     format = "%status|%percentage"
-# }
-$CONFIG[:use_i3status] = File.exists?("/usr/local/bin/i3status")
-
 # how often i3status is setup to report; with this we can override longer poll
 # times for network and power since we'll have more accurate info sooner at no
 # cost to us
 $CONFIG[:i3status_poll] = 5
 
 # which modules are enabled, and in which order
-$CONFIG[:module_order] = [ :weather, :stocks, :temp, :power, :network, :time,
-  :date ]
+$CONFIG[:module_order] = [ :weather, :stocks, :temp, :power, :network, :audio,
+  :time, :date ]
 
 # override defaults by eval'ing ~/.dzen-jcs.rb
 if File.exists?(f = "#{ENV['HOME']}/.dzen-jcs.rb")
@@ -310,31 +309,9 @@ def power
     batt_max = batt_left = batt_perc = {}, {}, {}
     ac_on = false
 
-    if $CONFIG[:use_i3status]
-      if m = $i3status_cache[:battery].match(/^(CHR|BAT)\|(\d*)%/)
-        ac_on = (m[1] == "CHR")
-        batt_perc = { 0 => m[2].to_i }
-      end
-    else
-      s = IO.popen("/usr/sbin/sysctl hw.sensors")
-      s.readlines.each do |sc|
-        if m = sc.match(/acpibat(\d)\.watthour.=([\d\.]+) Wh .last full/)
-          batt_max[m[1].to_i] = m[2].to_f
-        elsif m = sc.match(/acpibat(\d)\.watthour.=([\d\.]+) Wh .remaining cap/)
-          batt_left[m[1].to_i] = m[2].to_f
-        elsif sc.match(/acpiac.\.indicator0=On/)
-          ac_on = true
-        end
-      end
-      s.close
-
-      batt_left.keys.each do |i|
-        batt_perc[i] = (batt_left[i] / batt_max[i]) * 100.0
-
-        if batt_perc[i] >= 99.5
-          batt_perc[i] = 100
-        end
-      end
+    if m = $i3status_cache[:battery].match(/^(CHR|BAT)\|(\d*)%/)
+      ac_on = (m[1] == "CHR")
+      batt_perc = { 0 => m[2].to_i }
     end
 
     out = ""
@@ -409,19 +386,11 @@ end
 
 # show any temperature sensors that are too hot
 def temp
-  update_every($CONFIG[:use_i3status] ? $CONFIG[:i3status_poll] : 30) do
+  update_every($CONFIG[:i3status_poll]) do
     temps = []
 
-    if $CONFIG[:use_i3status] && $i3status_cache[:cpu_temperature]
+    if $i3status_cache[:cpu_temperature]
       temps.push $i3status_cache[:cpu_temperature].to_f
-    else
-      s = IO.popen("/usr/sbin/sysctl hw.sensors.acpitz0.temp0")
-      s.readlines.each do |sc|
-        if m = sc.match(/temp\d=([\d\.]+) degC/)
-          temps.push m[1].to_f
-        end
-      end
-      s.close
     end
 
     m = 0.0
@@ -472,47 +441,27 @@ end
 
 # show the network interface status
 def network
-  update_every($CONFIG[:use_i3status] ? $CONFIG[:i3status_poll] : 30) do
+  update_every($CONFIG[:i3status_poll]) do
     wifi_up = false
     wifi_connected = false
     wifi_signal = 0
     eth_connected = false
 
-    if $CONFIG[:use_i3status]
-      if m = $i3status_cache[:wireless].to_s.match(/^up\|(.+)$/)
-        wifi_up = true
+    if m = $i3status_cache[:wireless].to_s.match(/^up\|(.+)$/)
+      wifi_up = true
 
-        if m[1] == "?"
-          wifi_connected = false
-        else
-          wifi_connected = true
-          if n = m[1].match(/(\d+)%/)
-            wifi_signal = n[1].to_i
-          end
+      if m[1] == "?"
+        wifi_connected = false
+      else
+        wifi_connected = true
+        if n = m[1].match(/(\d+)%/)
+          wifi_signal = n[1].to_i
         end
       end
+    end
 
-      if $i3status_cache[:ethernet].to_s.match(/up/)
-        eth_connected = true
-      end
-    else
-      [ :wifi_device, :eth_device ].each do |dev|
-        i = IO.popen("/sbin/ifconfig #{$CONFIG[dev]} 2>&1")
-        i.readlines.each do |sc|
-          if sc.match(/flags=.*<UP,/) && dev == :wifi_device
-            wifi_up = true
-          elsif sc.match(/status: active/)
-            if dev == :wifi_device
-              wifi_connected = true
-            else
-              eth_connected = true
-            end
-          elsif m = sc.match(/bssid [^ ]* (\d+)% /)
-            wifi_signal = m[1].to_i
-          end
-        end
-        i.close
-      end
+    if $i3status_cache[:ethernet].to_s.match(/up/)
+      eth_connected = true
     end
 
     wi = ""
@@ -584,6 +533,11 @@ Kernel.trap("QUIT", "cleanup")
 Kernel.trap("TERM", "cleanup")
 Kernel.trap("INT", "cleanup")
 
+if !File.exists?("/usr/local/bin/i3status")
+  STDERR.puts "i3status not found"
+  exit 1
+end
+
 # find the screen resolution so we can pass a proper -x value to dzen2 (newer
 # versions can do -x -700)
 width = `/usr/X11R6/bin/xwininfo -root`.split("\n").select{|l|
@@ -606,11 +560,8 @@ $dzen = IO.popen([
 ], "w+")
 
 # and a reader from i3status
-$i3status = nil
 $i3status_cache = {}
-if $CONFIG[:use_i3status]
-  $i3status = IO.popen("i3status", "r+")
-end
+$i3status = IO.popen("/usr/local/bin/i3status", "r+")
 
 # it may take a while for components to start up and cache things, so tell the
 # user
@@ -623,14 +574,12 @@ while $dzen do
   end
 
   # read all input from i3status, use last line of input
-  if $i3status
-    while IO.select([ $i3status ], nil, nil, 0.1)
-      # [{"name":"wireless","instance":"iwn0","full_text":"up|166 dBm"},...
-      if m = $i3status.gets.to_s.match(/^,?(\[\{.*)/)
-        $i3status_cache = {}
-        JSON.parse(m[1]).each do |mod|
-          $i3status_cache[mod["name"].to_sym] = mod["full_text"]
-        end
+  while $i3status && IO.select([ $i3status ], nil, nil, 0.1)
+    # [{"name":"wireless","instance":"iwn0","full_text":"up|166 dBm"},...
+    if m = $i3status.gets.to_s.match(/^,?(\[\{.*)/)
+      $i3status_cache = {}
+      JSON.parse(m[1]).each do |mod|
+        $i3status_cache[mod["name"].to_sym] = mod["full_text"]
       end
     end
   end

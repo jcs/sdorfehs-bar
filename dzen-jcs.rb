@@ -1,8 +1,5 @@
 #!/usr/bin/env ruby
 #
-# a script to parse i3status output along with some other optional modules, and
-# pipe it to dzen2
-#
 # Copyright (c) 2009-2015 joshua stein <jcs@jcs.org>
 #
 # Redistribution and use in source and binary forms, with or without
@@ -27,43 +24,6 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 # THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# requires an ~/.i3status.conf with:
-# general {
-#     output_format = "i3bar"
-#     colors = false
-#     interval = 5
-# }
-#
-# order += "wireless iwn0"
-# order += "ethernet em0"
-# order += "battery 0"
-# order += "cpu_temperature acpithinkpad0"
-# order += "volume master"
-#
-# cpu_temperature acpithinkpad0 {
-#     format = "%degrees"
-# }
-#
-# wireless iwn0 {
-#     format_up = "up|%signal"
-#     format_down = "down"
-# }
-#
-# ethernet em0 {
-#     format_up = "up"
-#     format_down = "down"
-# }
-#
-# battery 0 {
-#     format = "%status|%percentage"
-# }
-#
-# volume master {
-#     format = "%volume"
-#     format_muted = "muted %volume"
-#     mixer = "outputs.master"
-# }
 
 require "date"
 require "dbus"
@@ -72,60 +32,56 @@ require "rexml/document"
 require "uri"
 require "json"
 
-$CONFIG = {}
+@config = {}
 
 # seconds to blink on and off during 1 second
-$CONFIG[:blink] = [ 0.85, 0.15 ]
+@config[:blink] = [ 0.85, 0.15 ]
 
 # dzen bar height
-$CONFIG[:height] = 38
+@config[:height] = 40
+
+# right-side padding
+@config[:rightpadding] = 25
+
+# top padding
+@config[:toppadding] = 4
 
 # font for dzen to use
-$CONFIG[:font] = "dejavu sans mono:size=5.5"
+@config[:font] = "dejavu sans mono:size=10"
 
-$CONFIG[:colors] = {
-  :bg => "black",
-  :fg => "white",
-  :disabled => "gray40",
-  :sep => "#888",
-  :ok => "green",
+@config[:colors] = {
+  :bg => `ratpoison -c 'set bgcolor'`.strip,
+  :fg => `ratpoison -c 'set fgcolor'`.strip,
+  :disabled => "#90A1AD",
+  :sep => "#7E94A3",
+  :ok => "#87DE99",
   :warn => "orange",
-  :alert => "yellow",
-  :emerg => "red",
+  :alert => "#D2DE87",
+  :emerg => "darkred",
 }
 
 # minimum temperature (f) at which sensors will be shown
-$CONFIG[:temp_min] = 155
+@config[:temp_min] = 155
 
 # zipcode to fetch weather for
-$CONFIG[:weather_zip] = "60622"
+@config[:weather_zip] = "60622"
 
 # stocks symbols to watch
-$CONFIG[:stocks] = {}
+@config[:stocks] = {}
 
 # pidgin status id->string->color mapping (not available through dbus)
-$CONFIG[:pidgin_statuses] = {
-  1 => { :s => "offline", :c => $CONFIG[:colors][:disabled] },
-  2 => { :s => "available", :c => $CONFIG[:colors][:ok] },
-  3 => { :s => "unavailable", :c => $CONFIG[:colors][:alert] },
+@config[:pidgin_statuses] = {
+  1 => { :s => "offline", :c => @config[:colors][:disabled] },
+  2 => { :s => "available", :c => @config[:colors][:ok] },
+  3 => { :s => "unavailable", :c => @config[:colors][:alert] },
   4 => { :s => "invisible", :c => "#cccccc" },
   5 => { :s => "away", :c => "#cccccc" },
   6 => { :s => "ext away", :c => "#cccccc" },
 }
 
-# how often i3status is setup to report; with this we can override longer poll
-# times for network and power since we'll have more accurate info sooner at no
-# cost to us
-$CONFIG[:i3status_poll] = 5
-
 # which modules are enabled, and in which order
-$CONFIG[:module_order] = [ :weather, :stocks, :temp, :power, :network, :audio,
-  :time, :date ]
-
-# override defaults by eval'ing ~/.dzen-jcs.rb
-if File.exists?(f = "#{ENV['HOME']}/.dzen-jcs.rb")
-  eval(File.read(f))
-end
+@config[:module_order] = [ :weather, :temp, :power, :network, :audio, :time,
+  :date ]
 
 # helpers
 
@@ -168,7 +124,7 @@ def unblink(str)
 
     if m = chunk.match(/^(.*)\^blink\($/)
       new_str << m[1]
-      dark_str << m[1] << "^fg(#{$CONFIG[:colors][:disabled]})"
+      dark_str << m[1] << "^fg(#{@config[:colors][:disabled]})"
 
       # keep eating characters until we see the closing )
       opens = 0
@@ -204,7 +160,7 @@ def unblink(str)
 end
 
 @cache = {}
-def update_every(seconds)
+def update_every(seconds = 1)
   c = caller_method_name
   @cache[c] ||= { :last => nil, :data => nil, :error => nil }
 
@@ -218,7 +174,7 @@ def update_every(seconds)
       @cache[c][:error] = Time.now.to_i
     rescue StandardError => e
       @cache[c][:data] = "error: #{e.inspect}"
-      STDERR.puts e.backtrace
+      STDERR.puts e.inspect, e.backtrace
       @cache[c][:error] = Time.now.to_i
     end
     @cache[c][:last] = Time.now.to_i
@@ -246,13 +202,13 @@ def bluetooth
     end
     b.close
 
-    present ? "^fg(#{up ? 'green' : $CONFIG[:colors][:disabled]})bt^fg()" : nil
+    present ? "^fg(#{@config[:colors][up ? :ok : :disabled]})bt^fg()" : nil
   end
 end
 
 # show the date
 def date
-  update_every(1) do
+  update_every do
     # no strftime arg for date without leading zero :(
     (Time.now.strftime("%A #{Date.today.day.to_s} %b")).downcase
   end
@@ -261,7 +217,7 @@ end
 # if pidgin is running, show the away/available status, and whether there are
 # any unread messages pending
 def pidgin
-  update_every(1) do
+  update_every do
     begin
       @dbus_session ||= DBus::SessionBus.instance
     rescue => e
@@ -289,27 +245,27 @@ def pidgin
         unread += @dbus_pidgin.PurpleConversationGetData(c, "unseen-count").first
       end
 
-      sh = $CONFIG[:pidgin_statuses][
+      sh = @config[:pidgin_statuses][
         @dbus_pidgin.PurpleSavedstatusGetType(status).first]
 
       "^fg(#{sh[:c]})#{sh[:s]}^fg()" <<
-        (unread > 0 ? " ^fg(#{$CONFIG[:colors][:alert]})" <<
+        (unread > 0 ? " ^fg(#{@config[:colors][:alert]})" <<
         "^blink((#{unread} unread))^fg()" : "")
     else
       @dbus_purple = @dbus_pidgin = nil
 
-      "^fg(#{$CONFIG[:colors][:disabled]})offline^fg()"
+      "^fg(#{@config[:colors][:disabled]})offline^fg()"
     end
   end
 end
 
 # show the ac status, then each battery's percentage of power left
 def power
-  update_every(5) do
+  update_every do
     batt_max = batt_left = batt_perc = {}, {}, {}
     ac_on = false
 
-    if m = $i3status_cache[:battery].match(/^(CHR|BAT)\|(\d*)%/)
+    if m = @i3status_cache[:battery].match(/^(CHR|BAT)\|(\d*)%/)
       ac_on = (m[1] == "CHR")
       batt_perc = { 0 => m[2].to_i }
     end
@@ -317,29 +273,30 @@ def power
     out = ""
 
     if ac_on
-      out << "^fg(green)ac^fg(#{$CONFIG[:colors][:disabled]})"
+      out << "^fg(#{@config[:colors][:ok]})ac" <<
+        "^fg(#{@config[:colors][:disabled]})"
       batt_perc.keys.each do |i|
         out << sprintf("/%d%%", batt_perc[i])
       end
       out << "^fg()"
     else
-      out = "^fg(#{$CONFIG[:colors][:disabled]})ac^fg()"
+      out = "^fg(#{@config[:colors][:disabled]})ac^fg()"
 
       total_perc = batt_perc.values.inject{|a,b| a + b }
 
       batt_perc.keys.each do |i|
-        out << "^fg(#{$CONFIG[:colors][:disabled]})/"
+        out << "^fg(#{@config[:colors][:disabled]})/"
 
         blink = false
         if batt_perc[i] <= 10.0
-          out << "^fg(#{$CONFIG[:colors][:emerg]})"
+          out << "^fg(#{@config[:colors][:emerg]})"
           if total_perc < 10.0
             blink = true
           end
         elsif batt_perc[i] < 30.0
-          out << "^fg(#{$CONFIG[:colors][:alert]})"
+          out << "^fg(#{@config[:colors][:alert]})"
         else
-          out << "^fg(#{$CONFIG[:colors][:ok]})"
+          out << "^fg(#{@config[:colors][:ok]})"
         end
 
         out << (blink ? "^blink(" : "") +
@@ -354,9 +311,9 @@ end
 def stocks
   update_every(60 * 5) do
     # TODO: check time, don't bother polling outside of market hours
-    if $CONFIG[:stocks].any?
+    if @config[:stocks].any?
       sd = Net::HTTP.get(URI.parse("http://download.finance.yahoo.com/d/" +
-        "quotes.csv?s=" + $CONFIG[:stocks].keys.join("+") + "&f=sp2l1"))
+        "quotes.csv?s=" + @config[:stocks].keys.join("+") + "&f=sp2l1"))
 
       out = []
       sd.split("\r\n").each do |line|
@@ -366,12 +323,12 @@ def stocks
         change = change.gsub(/%/, "").to_f
 
         color = ""
-        if quote.to_f >= $CONFIG[:stocks][ticker].to_f
-          color = $CONFIG[:colors][:alert]
+        if quote.to_f >= @config[:stocks][ticker].to_f
+          color = @config[:colors][:alert]
         elsif change > 0.0
-          color = $CONFIG[:colors][:ok]
+          color = @config[:colors][:ok]
         elsif change < 0.0
-          color = $CONFIG[:colors][:emerg]
+          color = @config[:colors][:emerg]
         end
 
         out.push "#{ticker} ^fg(#{color})#{quote}^fg()"
@@ -386,20 +343,20 @@ end
 
 # show any temperature sensors that are too hot
 def temp
-  update_every($CONFIG[:i3status_poll]) do
+  update_every do
     temps = []
 
-    if $i3status_cache[:cpu_temperature]
-      temps.push $i3status_cache[:cpu_temperature].to_f
+    if @i3status_cache[:cpu_temperature]
+      temps.push @i3status_cache[:cpu_temperature].to_f
     end
 
     m = 0.0
     temps.each{|t| m += t }
     fh = (9.0 / 5.0) * (m / temps.length.to_f) + 32.0
 
-    if fh > $CONFIG[:temp_min]
-      "^fg(#{$CONFIG[:colors][:alert]})^blink(#{fh.to_i})" <<
-        "^fg(#{$CONFIG[:colors][:disabled]})f^fg()"
+    if fh > @config[:temp_min]
+      "^fg(#{@config[:colors][:alert]})^blink(#{fh.to_i})" <<
+        "^fg(#{@config[:colors][:disabled]})f^fg()"
     else
       nil
     end
@@ -407,7 +364,7 @@ def temp
 end
 
 def time
-  update_every(1) do
+  update_every do
     Time.now.strftime("%H:%M")
   end
 end
@@ -418,7 +375,7 @@ def weather
     w = ""
 
     xml = REXML::Document.new(Net::HTTP.get(URI.parse(
-      "http://weather.yahooapis.com/forecastrss?p=#{$CONFIG[:weather_zip]}")))
+      "http://weather.yahooapis.com/forecastrss?p=#{@config[:weather_zip]}")))
 
     w << xml.elements["rss"].elements["channel"].elements["item"].
       elements["yweather:condition"].attributes["text"].downcase
@@ -426,14 +383,14 @@ def weather
     # add current temperature
     w << " ^fg()" << (xml.elements["rss"].elements["channel"].elements["item"].
       elements["yweather:condition"].attributes["temp"]) <<
-      "^fg(#{$CONFIG[:colors][:disabled]})f^fg()"
+      "^fg(#{@config[:colors][:disabled]})f^fg()"
 
     # add current humidity
     humidity = xml.elements["rss"].elements["channel"].
       elements["yweather:atmosphere"].attributes["humidity"].to_i
-    w << "^fg(#{$CONFIG[:colors][:disabled]})/^fg(" <<
-      (humidity > 60 ? $CONFIG[:colors][:alert] : "") <<
-      ")" << humidity.to_s << "^fg(#{$CONFIG[:colors][:disabled]})%^fg()"
+    w << "^fg(#{@config[:colors][:disabled]})/^fg(" <<
+      (humidity > 60 ? @config[:colors][:alert] : "") <<
+      ")" << humidity.to_s << "^fg(#{@config[:colors][:disabled]})%^fg()"
 
     w
   end
@@ -441,55 +398,52 @@ end
 
 # show the network interface status
 def network
-  update_every($CONFIG[:i3status_poll]) do
+  update_every do
     wifi_up = false
     wifi_connected = false
     wifi_signal = 0
     eth_connected = false
 
-    if m = $i3status_cache[:wireless].to_s.match(/^up\|(.+)$/)
+    if m = @i3status_cache[:wireless].to_s.match(/^up\|(.+)$/)
       wifi_up = true
 
       if m[1] == "?"
         wifi_connected = false
       else
         wifi_connected = true
-        if n = m[1].match(/(\d+)%/)
+        if n = m[1].match(/(\d+)%/) # old
           wifi_signal = n[1].to_i
+        elsif n = m[1].match(/(-?\d+) dBm/)
+          wifi_signal = [ 2 * (n[1].to_i + 100), 100 ].min
         end
       end
     end
 
-    if $i3status_cache[:ethernet].to_s.match(/up/)
+    if @i3status_cache[:ethernet].to_s.match(/up/)
       eth_connected = true
     end
 
     wi = ""
     eth = ""
 
-    if wifi_connected
-      wi = "^fg(green)wifi"
-
-      if wifi_signal > 0
-        wi << "^fg(#{$CONFIG[:disabled]})/"
-
-        if wifi_signal >= 75
-          wi << "^fg(#{$CONFIG[:colors][:ok]})"
-        elsif wifi_signal >= 50
-          wi << "^fg(#{$CONFIG[:colors][:alert]})"
-        else
-          wi << "^fg(#{$CONFIG[:colors][:warn]})"
-        end
-        # will probably never have 100% signal
-        wi << sprintf("%2.0d", wifi_signal) <<
-          "^fg(#{$CONFIG[:colors][:disabled]})%^fg()"
+    if wifi_connected && wifi_signal > 0
+      if wifi_signal >= 75
+        wi << "^fg(#{@config[:colors][:ok]})"
+      elsif wifi_signal >= 50
+        wi << "^fg(#{@config[:colors][:alert]})"
+      else
+        wi << "^fg(#{@config[:colors][:warn]})"
       end
+
+      wi << "wifi^fg()"
+    elsif wifi_connected
+      wi = "^fg(#{@config[:colors][:ok]})wifi^fg()"
     elsif wifi_up
-      wi = "^fg(#{$CONFIG[:colors][:disabled]})wifi^fg()"
+      wi = "^fg(#{@config[:colors][:disabled]})wifi^fg()"
     end
 
     if eth_connected
-      eth = "^fg(green)eth^fg()"
+      eth = "^fg(#{@config[:colors][:ok]})eth^fg()"
     end
 
     out = nil
@@ -498,7 +452,7 @@ def network
     end
     if eth != ""
       if out
-        out << "^fg(#{$CONFIG[:colors][:disabled]}), " << eth
+        out << "^fg(#{@config[:colors][:disabled]}), " << eth
       else
         out = eth
       end
@@ -508,21 +462,36 @@ def network
   end
 end
 
+# show the audio volume
+def audio
+  update_every do
+    o = "^fg(#{@config[:colors][:disabled]})vol/"
+
+    if @i3status_cache[:volume].match(/mute/)
+      o << "---"
+    else
+      o << "^fg(#{@config[:colors][:ok]})" << @i3status_cache[:volume]
+    end
+
+    o << "^fg()"
+    o
+  end
+end
+
 # separator bar
 def sep
-  "^fg(#{$CONFIG[:colors][:bg]})^r(16x1)^fg(#{$CONFIG[:colors][:sep]})" <<
-    "^r(1x#{$CONFIG[:height].to_f/1.35})^fg(#{$CONFIG[:colors][:bg]})" <<
-    "^r(16x1)^fg()"
+  "^p(+16)^fg(#{@config[:colors][:sep]})^r(1x#{@config[:height].to_f/1.35})" <<
+    "^p(+16)^fg()"
 end
 
 # kill dzen2/i3status when we die
 def cleanup
-  if $dzen
-    Process.kill(9, $dzen.pid)
+  if @dzen
+    Process.kill(9, @dzen.pid)
   end
 
-  if $i3status
-    Process.kill(9, $i3status.pid)
+  if @i3status
+    Process.kill(9, @i3status.pid)
   end
 
   exit
@@ -547,59 +516,61 @@ if width == 0
 end
 
 # bring up a writer to dzen
-$dzen = IO.popen([
+@dzen = IO.popen([
   "dzen2",
-  "-x", (width - 700).to_s,
-  "-w", "700",
-  "-bg", $CONFIG[:colors][:bg],
-  "-fg", $CONFIG[:colors][:fg],
+  "-dock",
+  "-x", (width - 900 - @config[:rightpadding]).to_s,
+  "-w", "900",
+  "-y", @config[:toppadding].to_s,
+  "-bg", @config[:colors][:bg],
+  "-fg", @config[:colors][:fg],
   "-ta", "r",
-  "-h", $CONFIG[:height].to_s,
-  "-fn", $CONFIG[:font],
+  "-h", @config[:height].to_s,
+  "-fn", @config[:font],
   "-p"
 ], "w+")
 
 # and a reader from i3status
-$i3status_cache = {}
-$i3status = IO.popen("/usr/local/bin/i3status", "r+")
+@i3status_cache = {}
+@i3status = IO.popen("/usr/local/bin/i3status", "r+")
 
 # it may take a while for components to start up and cache things, so tell the
 # user
-$dzen.puts "^fg(#{$CONFIG[:colors][:alert]}) starting up ^fg()"
+@dzen.puts "^fg(#{@config[:colors][:alert]}) starting up ^fg()"
 
-while $dzen do
-  if IO.select([ $dzen ], nil, nil, 0.1)
+while @dzen do
+  if IO.select([ @dzen ], nil, nil, 0.1)
     cleanup
     exit
   end
 
   # read all input from i3status, use last line of input
-  while $i3status && IO.select([ $i3status ], nil, nil, 0.1)
+  while @i3status && IO.select([ @i3status ], nil, nil, 0.1)
     # [{"name":"wireless","instance":"iwn0","full_text":"up|166 dBm"},...
-    if m = $i3status.gets.to_s.match(/^,?(\[\{.*)/)
-      $i3status_cache = {}
+    if m = @i3status.gets.to_s.match(/^,?(\[\{.*)/)
+      @i3status_cache = {}
       JSON.parse(m[1]).each do |mod|
-        $i3status_cache[mod["name"].to_sym] = mod["full_text"]
+        @i3status_cache[mod["name"].to_sym] = mod["full_text"]
       end
     end
   end
 
   # build output by concatting each module's output
-  output = $CONFIG[:module_order].map{|a| eval(a.to_s) }.reject{|part| !part }.
-    join(sep) << "  "
+  output = @config[:module_order].map{|a| eval(a.to_s) }.reject{|part| !part }.
+    join(sep)
 
   # handle ^blink() internally
   if output.match(/\^blink\(/)
     output, dark = unblink(output)
 
     # flash output, darken it for a brief moment, then show it again
-    $dzen.puts output
-    sleep $CONFIG[:blink].first
-    $dzen.puts dark
-    sleep $CONFIG[:blink].last
-    $dzen.puts output
+    @dzen.puts output
+    sleep @config[:blink].first
+    @dzen.puts dark
+    sleep @config[:blink].last
+    @dzen.puts output
   else
-    $dzen.puts output
+    @dzen.puts output
 
     sleep 1
   end

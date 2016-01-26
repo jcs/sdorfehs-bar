@@ -55,12 +55,13 @@ config = {
     :bg => `ratpoison -c 'set bgcolor'`.strip,
     :fg => `ratpoison -c 'set fgcolor'`.strip,
     :notification => "white",
+    :notification_title => "yellow",
     :disabled => "#90A1AD",
     :sep => "#7E94A3",
     :ok => "#87DE99",
     :warn => "orange",
     :alert => "#D2DE87",
-    :emerg => "darkred",
+    :emerg => "red",
   },
 
   # minimum temperature (f) at which sensors will be shown
@@ -80,7 +81,7 @@ config = {
   :dbus_notifications => true,
 
   # font for notifications
-  :notification_font => "dejavu sans mono:size=12:weight=bold",
+  :notification_font => "dejavu sans mono:size=11:weight=bold",
 
   # time to sleep while showing a notification
   :notification_wait => 5,
@@ -127,20 +128,37 @@ class Dzen
     @semaphore = Mutex.new
   end
 
-  def color
-    config[:colors]
+  def color(col)
+    config[:colors][col]
   end
 
   def show(str)
     @dzen.puts str
   end
 
-  def show_notification(notification)
-    notification = notification.to_s.gsub(/\^/, "\\^")
+  def clense(str)
+    # escape dzen control chars
+    str.to_s.gsub(/\^/, "\\^").gsub("\n", " ").gsub("\r", "")
+  end
+
+  def show_notification(title, notification)
+    max_len = 150
+
+    title = clense(title)
+    notification = clense(notification)
+
+    if title.length > max_len
+      title = title[0, max_len - 50]
+      notification = notification[0, 50]
+    else
+      notification = notification[0, max_len - title.length]
+    end
 
     @semaphore.synchronize {
       @notifications.push "^fn(#{config[:notification_font]})" <<
-        "^fg(#{color[:notification]})#{notification}^fn(#{config[:font]})^fg()"
+        "^fg(#{color(:notification_title)})#{title}: " <<
+        "^fg(#{color(:notification)})#{notification}" <<
+        "^fg()^fn(#{config[:font]})"
     }
   end
 
@@ -166,8 +184,8 @@ class Dzen
       "-x", (screenwidth - config[:width] - config[:rightpadding]).to_s,
       "-w", config[:width].to_s,
       "-y", config[:toppadding].to_s,
-      "-bg", color[:bg],
-      "-fg", color[:fg],
+      "-bg", color(:bg),
+      "-fg", color(:fg),
       "-ta", "r",
       "-h", config[:height].to_s,
       "-fn", config[:font],
@@ -180,7 +198,7 @@ class Dzen
 
     # it may take a while for components to start up and cache things, so tell
     # the user
-    self.show "^fg(#{color[:alert]}) starting up ^fg()"
+    self.show "^fg(#{color(:alert)}) starting up ^fg()"
 
     while @dzen do
       if @dying || IO.select([ @dzen ], nil, nil, 0.1)
@@ -256,7 +274,7 @@ class Dzen
 
       if m = chunk.match(/^(.*)\^blink\($/)
         new_str << m[1]
-        dark_str << m[1] << "^fg(#{color[:disabled]})"
+        dark_str << m[1] << "^fg(#{color(:disabled)})"
 
         # keep eating characters until we see the closing )
         opens = 0
@@ -333,7 +351,7 @@ class Dzen
       end
       b.close
 
-      present ? "^fg(#{color[up ? :ok : :disabled]})bt^fg()" : nil
+      present ? "^fg(#{color(up ? :ok : :disabled)})bt^fg()" : nil
     end
   end
 
@@ -359,30 +377,30 @@ class Dzen
       out = ""
 
       if ac_on
-        out << "^fg(#{color[:ok]})ac" <<
-          "^fg(#{color[:disabled]})"
+        out << "^fg(#{color(:ok)})ac" <<
+          "^fg(#{color(:disabled)})"
         batt_perc.keys.each do |i|
           out << sprintf("/%d%%", batt_perc[i])
         end
         out << "^fg()"
       else
-        out = "^fg(#{color[:disabled]})ac^fg()"
+        out = "^fg(#{color(:disabled)})ac^fg()"
 
         total_perc = batt_perc.values.inject{|a,b| a + b }
 
         batt_perc.keys.each do |i|
-          out << "^fg(#{color[:disabled]})/"
+          out << "^fg(#{color(:disabled)})/"
 
           blink = false
           if batt_perc[i] <= 10.0
-            out << "^fg(#{color[:emerg]})"
+            out << "^fg(#{color(:emerg)})"
             if total_perc < 10.0
               blink = true
             end
           elsif batt_perc[i] < 30.0
-            out << "^fg(#{color[:alert]})"
+            out << "^fg(#{color(:alert)})"
           else
-            out << "^fg(#{color[:ok]})"
+            out << "^fg(#{color(:ok)})"
           end
 
           out << (blink ? "^blink(" : "") +
@@ -410,11 +428,11 @@ class Dzen
 
           color = ""
           if quote.to_f >= config[:stocks][ticker].to_f
-            color = color[:alert]
+            color = color(:alert)
           elsif change > 0.0
-            color = color[:ok]
+            color = color(:ok)
           elsif change < 0.0
-            color = color[:emerg]
+            color = color(:emerg)
           end
 
           out.push "#{ticker} ^fg(#{color})#{quote}^fg()"
@@ -441,7 +459,7 @@ class Dzen
       fh = (9.0 / 5.0) * (m / temps.length.to_f) + 32.0
 
       if fh > config[:temp_min]
-        "^fg(#{color[:alert]})^blink(#{fh.to_i})^fg(#{color[:disabled]})f^fg()"
+        "^fg(#{color(:alert)})^blink(#{fh.to_i})^fg(#{color(:disabled)})f^fg()"
       else
         nil
       end
@@ -468,14 +486,14 @@ class Dzen
       # add current temperature
       w << " ^fg()" << (xml.elements["rss"].elements["channel"].elements["item"].
         elements["yweather:condition"].attributes["temp"]) <<
-        "^fg(#{color[:disabled]})f^fg()"
+        "^fg(#{color(:disabled)})f^fg()"
 
       # add current humidity
       humidity = xml.elements["rss"].elements["channel"].
         elements["yweather:atmosphere"].attributes["humidity"].to_i
-      w << "^fg(#{color[:disabled]})/^fg(" <<
-        (humidity > 60 ? color[:alert] : "") <<
-        ")" << humidity.to_s << "^fg(#{color[:disabled]})%^fg()"
+      w << "^fg(#{color(:disabled)})/^fg(" <<
+        (humidity > 60 ? color(:alert) : "") <<
+        ")" << humidity.to_s << "^fg(#{color(:disabled)})%^fg()"
 
       w
     end
@@ -513,22 +531,22 @@ class Dzen
 
       if wifi_connected && wifi_signal > 0
         if wifi_signal >= 75
-          wi << "^fg(#{color[:ok]})"
+          wi << "^fg(#{color(:ok)})"
         elsif wifi_signal >= 50
-          wi << "^fg(#{color[:alert]})"
+          wi << "^fg(#{color(:alert)})"
         else
-          wi << "^fg(#{color[:warn]})"
+          wi << "^fg(#{color(:warn)})"
         end
 
         wi << "wifi^fg()"
       elsif wifi_connected
-        wi = "^fg(#{color[:ok]})wifi^fg()"
+        wi = "^fg(#{color(:ok)})wifi^fg()"
       elsif wifi_up
-        wi = "^fg(#{color[:disabled]})wifi^fg()"
+        wi = "^fg(#{color(:disabled)})wifi^fg()"
       end
 
       if eth_connected
-        eth = "^fg(#{color[:ok]})eth^fg()"
+        eth = "^fg(#{color(:ok)})eth^fg()"
       end
 
       out = nil
@@ -537,7 +555,7 @@ class Dzen
       end
       if eth != ""
         if out
-          out << "^fg(#{color[:disabled]}), " << eth
+          out << "^fg(#{color(:disabled)}), " << eth
         else
           out = eth
         end
@@ -550,12 +568,12 @@ class Dzen
   # show the audio volume
   def audio
     update_every do
-      o = "^fg(#{color[:disabled]})vol/"
+      o = "^fg(#{color(:disabled)})vol/"
 
       if @i3status_cache[:volume].match(/mute/)
         o << "---"
       else
-        o << "^fg(#{color[:ok]})" << @i3status_cache[:volume]
+        o << "^fg(#{color(:ok)})" << @i3status_cache[:volume]
       end
 
       o << "^fg()"
@@ -565,7 +583,7 @@ class Dzen
 
   # separator bar
   def sep
-    "^p(+16)^fg(#{color[:sep]})^r(1x#{config[:height].to_f/1.35})^p(+16)^fg()"
+    "   "
   end
 end
 
@@ -587,16 +605,7 @@ class NotificationService < DBus::Object
     "in hints:a{sv}",
     "in expire_timeout:i" ].join(", ") do |app_name, replaces_id, app_icon,
     summary, body, actions, hints, expire_timeout|
-      str = ""
-      if summary.to_s == ""
-        str << app_name
-      else
-        str << summary
-      end
-
-      str << ": #{body}"
-
-      @dzen.show_notification(str)
+      @dzen.show_notification(summary.to_s == "" ? app_name : summary, body)
     end
 
     dbus_method :CloseNotification, "in id:u" do |*args|
@@ -622,7 +631,7 @@ end
 
 @dzen = Dzen.new(config)
 
-# try to take dzen2 down with us
+# try to take dzen2 and i3status down with us
 [ "QUIT", "TERM", "INT" ].each{|sig| Kernel.trap(sig) { @dzen.dying = true } }
 
 if config[:dbus_notifications]

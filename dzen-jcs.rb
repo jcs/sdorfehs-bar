@@ -374,38 +374,27 @@ class Dzen
         batt_perc = { 0 => m[2].to_i }
       end
 
-      out = ""
+      out = "^fg(#{ac_on ? "" : color(:disabled)})ac"
 
-      if ac_on
-        out << "^fg(#{color(:ok)})ac" <<
-          "^fg(#{color(:disabled)})"
-        batt_perc.keys.each do |i|
-          out << sprintf("/%d%%", batt_perc[i])
-        end
-        out << "^fg()"
-      else
-        out = "^fg(#{color(:disabled)})ac^fg()"
+      total_perc = batt_perc.values.inject{|a,b| a + b }
 
-        total_perc = batt_perc.values.inject{|a,b| a + b }
+      batt_perc.keys.each do |i|
+        out << "^fg(#{color(:disabled)})/"
 
-        batt_perc.keys.each do |i|
-          out << "^fg(#{color(:disabled)})/"
-
-          blink = false
-          if batt_perc[i] <= 10.0
-            out << "^fg(#{color(:emerg)})"
-            if total_perc < 10.0
-              blink = true
-            end
-          elsif batt_perc[i] < 30.0
-            out << "^fg(#{color(:alert)})"
-          else
-            out << "^fg(#{color(:ok)})"
+        blink = false
+        if batt_perc[i] <= 10.0
+          out << "^fg(#{color(:emerg)})"
+          if total_perc < 10.0
+            blink = true
           end
-
-          out << (blink ? "^blink(" : "") +
-            sprintf("%d%%", batt_perc[i]) + (blink ? ")" : "") + "^fg()"
+        elsif batt_perc[i] < 30.0
+          out << "^fg(#{color(:alert)})"
+        else
+          out << "^fg()"
         end
+
+        out << (blink ? "^blink(" : "") + batt_perc[i].to_s +
+          (blink ? ")" : "") + "^fg(#{color(:disabled)})%^fg()"
       end
 
       out
@@ -468,7 +457,9 @@ class Dzen
 
   def time
     update_every do
-      Time.now.strftime("%H:%M")
+      t = Time.now
+      "^fg()" << t.strftime("%H") << "^fg(#{color(:disabled)}):^fg()" <<
+        t.strftime("%M")
     end
   end
 
@@ -531,7 +522,7 @@ class Dzen
 
       if wifi_connected && wifi_signal > 0
         if wifi_signal >= 75
-          wi << "^fg(#{color(:ok)})"
+          wi << "^fg()"
         elsif wifi_signal >= 50
           wi << "^fg(#{color(:alert)})"
         else
@@ -540,13 +531,13 @@ class Dzen
 
         wi << "wifi^fg()"
       elsif wifi_connected
-        wi = "^fg(#{color(:ok)})wifi^fg()"
+        wi = "^fg()wifi"
       elsif wifi_up
         wi = "^fg(#{color(:disabled)})wifi^fg()"
       end
 
       if eth_connected
-        eth = "^fg(#{color(:ok)})eth^fg()"
+        eth = "^fg()eth"
       end
 
       out = nil
@@ -573,7 +564,15 @@ class Dzen
       if @i3status_cache[:volume].match(/mute/)
         o << "---"
       else
-        o << "^fg(#{color(:ok)})" << @i3status_cache[:volume]
+        vol = @i3status_cache[:volume].gsub(/[^0-9]/, "").to_i
+
+        if vol >= 75
+          o << "^fg(#{color(:alert)})"
+        else
+          o << "^fg()"
+        end
+
+        o << "#{vol}^fg(#{color(:disabled)})%"
       end
 
       o << "^fg()"

@@ -28,7 +28,6 @@
 require "date"
 require "dbus"
 require "net/http"
-require "rexml/document"
 require "uri"
 require "json"
 
@@ -67,8 +66,9 @@ config = {
   # minimum temperature (f) at which sensors will be shown
   :temp_min => 155,
 
-  # zipcode to fetch weather for
-  :weather_zip => "60622",
+  # forecast.io api key and latitude/longitude for which to fetch weather
+  :weather_api_key => "",
+  :weather_lat_long => "",
 
   # stocks symbols to watch
   :stocks => {},
@@ -76,9 +76,8 @@ config = {
   # which modules are enabled, and in which order
   :module_order => [ :weather, :temp, :power, :network, :audio, :time, :date ],
 
-
   # for dbus notification integration
-  :dbus_notifications => true,
+  :dbus_notifications => false,
 
   # font for notifications
   :notification_font => "dejavu sans mono:size=11:weight=bold",
@@ -86,6 +85,11 @@ config = {
   # time to sleep while showing a notification
   :notification_wait => 5,
 }
+
+# override defaults by eval'ing ~/.dzen-jcs.rb
+if File.exists?(f = "#{ENV['HOME']}/.dzen-jcs.rb")
+  eval(File.read(f))
+end
 
 class NilClass
   def any?
@@ -463,28 +467,28 @@ class Dzen
     end
   end
 
-  # show the current/high temperature for today
+  # show the current temperature/humidity for today
   def weather
     update_every(60 * 10) do
-      w = ""
+      if !(config[:weather_api_key].any? && config[:weather_lat_long].any?)
+        next nil
+      end
 
-      xml = REXML::Document.new(Net::HTTP.get(URI.parse(
-        "http://weather.yahooapis.com/forecastrss?p=#{config[:weather_zip]}")))
+      js = JSON.parse(Net::HTTP.get(URI.parse(
+        "https://api.forecast.io/forecast/" + config[:weather_api_key] +
+        "/" + config[:weather_lat_long])))
 
-      w << xml.elements["rss"].elements["channel"].elements["item"].
-        elements["yweather:condition"].attributes["text"].downcase
+      w = js["currently"]["summary"].downcase
 
       # add current temperature
-      w << " ^fg()" << (xml.elements["rss"].elements["channel"].elements["item"].
-        elements["yweather:condition"].attributes["temp"]) <<
+      w << " ^fg()" << js["currently"]["apparentTemperature"].to_i.to_s <<
         "^fg(#{color(:disabled)})f^fg()"
 
       # add current humidity
-      humidity = xml.elements["rss"].elements["channel"].
-        elements["yweather:atmosphere"].attributes["humidity"].to_i
+      humidity = js["currently"]["humidity"].to_f * 100.0
       w << "^fg(#{color(:disabled)})/^fg(" <<
         (humidity > 60 ? color(:alert) : "") <<
-        ")" << humidity.to_s << "^fg(#{color(:disabled)})%^fg()"
+        ")" << humidity.to_i.to_s << "^fg(#{color(:disabled)})%^fg()"
 
       w
     end
@@ -559,7 +563,13 @@ class Dzen
   # show the audio volume
   def audio
     update_every do
-      o = "^fg(#{color(:disabled)})vol/"
+      o = "^fg()"
+
+      if @i3status_cache[:volume].match(/mute/)
+        o << "^fg(#{color(:disabled)})"
+      end
+
+      o << "vol^fg(#{color(:disabled)})/"
 
       if @i3status_cache[:volume].match(/mute/)
         o << "---"

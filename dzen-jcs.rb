@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 #
-# Copyright (c) 2009-2015 joshua stein <jcs@jcs.org>
+# Copyright (c) 2009-2017 joshua stein <jcs@jcs.org>
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -26,47 +26,50 @@
 # THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 require "date"
-require "dbus"
-require "net/http"
+require "net/https"
 require "uri"
 require "json"
+
+def screenwidth
+  `xrandr | grep '^Screen 0:'`.match(/.*current (\d+) x \d+/)[1].to_i
+end
 
 config = {
   # seconds to blink on and off during 1 second
   :blink => [ 0.85, 0.15 ],
 
   # dzen bar height
-  :height => 40,
+  :height => 28,
 
-  # dzen bar witdh
-  :width => 1500,
+  # dzen bar width, half of the screen
+  :width => screenwidth / 2,
 
   # right-side padding
-  :rightpadding => 25,
+  :rightpadding => `ratpoison -c 'set barpadding'`.gsub(/ .*/, "").to_i,
 
   # top padding
-  :toppadding => 4,
+  :toppadding => 0,
 
   # font for dzen to use
-  :font => "dejavu sans mono:size=10",
+  :font => "fixed",
 
   :colors => {
     :bg => `ratpoison -c 'set bgcolor'`.strip,
     :fg => `ratpoison -c 'set fgcolor'`.strip,
     :notification => "white",
     :notification_title => "yellow",
-    :disabled => "#90A1AD",
-    :sep => "#7E94A3",
-    :ok => "#87DE99",
+    :disabled => "#90a1ad",
+    :sep => "#7e94a3",
+    :ok => "#87de99",
     :warn => "orange",
-    :alert => "#D2DE87",
+    :alert => "#d2de87",
     :emerg => "red",
   },
 
   # minimum temperature (f) at which sensors will be shown
-  :temp_min => 155,
+  :temp_min => 160,
 
-  # forecast.io api key and latitude/longitude for which to fetch weather
+  # darksky.net api key and latitude/longitude for which to fetch weather
   :weather_api_key => "",
   :weather_lat_long => "",
 
@@ -74,13 +77,13 @@ config = {
   :stocks => {},
 
   # which modules are enabled, and in which order
-  :module_order => [ :weather, :temp, :power, :network, :audio, :time, :date ],
+  :module_order => [ :weather, :temp, :network, :power, :date, :time ],
 
   # for dbus notification integration
   :dbus_notifications => false,
 
   # font for notifications
-  :notification_font => "dejavu sans mono:size=11:weight=bold",
+  :notification_font => "fixed",
 
   # time to sleep while showing a notification
   :notification_wait => 5,
@@ -108,11 +111,8 @@ def caller_method_name
 end
 
 def parse_caller(at)
-  if /^(.+?):(\d+)(?::in `(.*)')?/ =~ at
-    file = Regexp.last_match[1]
-    line = Regexp.last_match[2].to_i
-    method = Regexp.last_match[3]
-    [file, line, method]
+  if m = at.match(/^(.+?):(\d+)(?::in `(.*)')?/)
+    [ m[1], m[2].to_i, m[3] ]
   end
 end
 
@@ -169,15 +169,6 @@ class Dzen
   def run!
     if !File.exists?("/usr/local/bin/i3status")
       STDERR.puts "i3status not found"
-      exit 1
-    end
-
-    # find the screen resolution so we can pass a proper -x value to dzen2
-    # (newer versions can do -x -700)
-    screenwidth = `/usr/X11R6/bin/xwininfo -root`.split("\n").select{|l|
-      l.match(/-geometry/) }.first.to_s.gsub(/.* /, "").gsub(/x.*/, "").to_i
-    if screenwidth == 0
-      STDERR.puts "can't find root geometry"
       exit 1
     end
 
@@ -362,8 +353,7 @@ class Dzen
   # show the date
   def date
     update_every do
-      # no strftime arg for date without leading zero :(
-      (Time.now.strftime("%A #{Date.today.day.to_s} %b")).downcase
+      (Time.now.strftime("%a %b %-d")).downcase
     end
   end
 
@@ -475,7 +465,7 @@ class Dzen
       end
 
       js = JSON.parse(Net::HTTP.get(URI.parse(
-        "https://api.forecast.io/forecast/" + config[:weather_api_key] +
+        "https://api.darksky.net/forecast/" + config[:weather_api_key] +
         "/" + config[:weather_lat_long])))
 
       w = js["currently"]["summary"].downcase
@@ -596,54 +586,56 @@ class Dzen
   end
 end
 
-class NotificationService < DBus::Object
-  def dzen=(dzen)
-    @dzen = dzen
-  end
-
-  # conforms to https://developer.gnome.org/notification-spec/
-  dbus_interface "org.freedesktop.Notifications" do
-    # susssasa{sv}i
-    dbus_method :Notify, [
-    "in app_name:s",
-    "in replaces_id:u",
-    "in app_icon:s",
-    "in summary:s",
-    "in body:s",
-    "in actions:as",
-    "in hints:a{sv}",
-    "in expire_timeout:i" ].join(", ") do |app_name, replaces_id, app_icon,
-    summary, body, actions, hints, expire_timeout|
-      @dzen.show_notification(summary.to_s == "" ? app_name : summary, body)
-    end
-
-    dbus_method :CloseNotification, "in id:u" do |*args|
-      # ignore for now
-    end
-
-    dbus_method :GetServerInformation, [
-    "out name:s",
-    "out vendor:s",
-    "out version:s",
-    "out spec_version:s" ].join(", ") do |*args|
-      [ "dzen-jcs", "jcs", "1", "1.0" ]
-    end
-
-    dbus_method :GetCapabilities, "out return_caps:as" do |*args|
-      [
-        [ "action-icons", "actions", "body", "body-hyperlinks", "body-images",
-          "body-markup", "icon-multi", "icon-static", "persistence", "sound" ]
-      ]
-    end
-  end
-end
-
 @dzen = Dzen.new(config)
 
 # try to take dzen2 and i3status down with us
 [ "QUIT", "TERM", "INT" ].each{|sig| Kernel.trap(sig) { @dzen.dying = true } }
 
 if config[:dbus_notifications]
+  require "dbus"
+
+  class NotificationService < DBus::Object
+    def dzen=(dzen)
+      @dzen = dzen
+    end
+
+    # conforms to https://developer.gnome.org/notification-spec/
+    dbus_interface "org.freedesktop.Notifications" do
+      # susssasa{sv}i
+      dbus_method :Notify, [
+      "in app_name:s",
+      "in replaces_id:u",
+      "in app_icon:s",
+      "in summary:s",
+      "in body:s",
+      "in actions:as",
+      "in hints:a{sv}",
+      "in expire_timeout:i" ].join(", ") do |app_name, replaces_id, app_icon,
+      summary, body, actions, hints, expire_timeout|
+        @dzen.show_notification(summary.to_s == "" ? app_name : summary, body)
+      end
+
+      dbus_method :CloseNotification, "in id:u" do |*args|
+        # ignore for now
+      end
+
+      dbus_method :GetServerInformation, [
+      "out name:s",
+      "out vendor:s",
+      "out version:s",
+      "out spec_version:s" ].join(", ") do |*args|
+        [ "dzen-jcs", "jcs", "1", "1.0" ]
+      end
+
+      dbus_method :GetCapabilities, "out return_caps:as" do |*args|
+        [
+          [ "action-icons", "actions", "body", "body-hyperlinks", "body-images",
+            "body-markup", "icon-multi", "icon-static", "persistence", "sound" ]
+        ]
+      end
+    end
+  end
+
   # start listening for dbus notifications
   Thread.abort_on_exception = true
   Thread.new {

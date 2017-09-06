@@ -39,19 +39,19 @@ config = {
   :blink => [ 0.85, 0.15 ],
 
   # dzen bar height
-  :height => 28,
+  :height => `ratpoison -c 'set padding'`.split(" ")[1].to_i,
 
   # dzen bar width, half of the screen
   :width => screenwidth / 2,
 
   # right-side padding
-  :rightpadding => `ratpoison -c 'set barpadding'`.gsub(/ .*/, "").to_i,
+  :rightpadding => `ratpoison -c 'set barpadding'`.split(" ")[0].to_i,
 
   # top padding
-  :toppadding => 0,
+  :toppadding => 5,
 
   # font for dzen to use
-  :font => "fixed",
+  :font => `ratpoison -c 'set font'`.strip,
 
   :colors => {
     :bg => `ratpoison -c 'set bgcolor'`.strip,
@@ -59,11 +59,10 @@ config = {
     :notification => "white",
     :notification_title => "yellow",
     :disabled => "#90a1ad",
-    :sep => "#7e94a3",
     :ok => "#87de99",
     :warn => "orange",
     :alert => "#d2de87",
-    :emerg => "red",
+    :emerg => "#ff7f7f",
   },
 
   # minimum temperature (f) at which sensors will be shown

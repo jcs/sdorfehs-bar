@@ -361,10 +361,17 @@ class Dzen
     update_every do
       batt_max = batt_left = batt_perc = {}, {}, {}
       ac_on = false
+      run_rate = 0.0
 
-      if m = @i3status_cache[:battery].match(/^(CHR|BAT)\|(\d*)%/)
-        ac_on = (m[1] == "CHR")
-        batt_perc = { 0 => m[2].to_i }
+      @i3status_cache[:battery].split("|").each_with_index do |d,x|
+        case x
+        when 0
+          ac_on = (d == "CHR")
+        when 1
+          batt_perc = { 0 => d.to_i }
+        when 2
+          run_rate = d.to_f
+        end
       end
 
       out = "^fg(#{ac_on ? "" : color(:disabled)})ac"
@@ -388,6 +395,22 @@ class Dzen
 
         out << (blink ? "^blink(" : "") + batt_perc[i].to_s +
           (blink ? ")" : "") + "^fg(#{color(:disabled)})%^fg()"
+      end
+
+      if !batt_perc.any?
+        out << "^fg(#{color(:disabled)})/?^fg()"
+      end
+
+      if run_rate > 0.0 && !ac_on
+        out << "^fg(#{color(:disabled)})/^fg()"
+
+        if run_rate >= 20.0
+          out << "^fg(#{color(:emerg)})"
+        elsif run_rate >= 10.0
+          out << "^fg(#{color(:alert)})"
+        end
+
+        out << "#{sprintf("%0.1f", run_rate)}w^fg()"
       end
 
       out
@@ -459,7 +482,18 @@ class Dzen
   # show the current temperature/humidity for today
   def weather
     update_every(60 * 10) do
-      if !(config[:weather_api_key].any? && config[:weather_lat_long].any?)
+      if !config[:weather_api_key].any?
+        next nil
+      end
+
+      if !config[:weather_lat_long].any?
+        js = JSON.parse(Net::HTTP.get(URI.parse("http://ip-api.com/json")))
+        if js["lat"] && js["lon"]
+          config[:weather_lat_long] = "#{js["lat"]},#{js["lon"]}"
+        end
+      end
+
+      if !config[:weather_lat_long].any?
         next nil
       end
 

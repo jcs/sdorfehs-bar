@@ -197,7 +197,6 @@ class Dzen
     while @dzen do
       if @dying || IO.select([ @dzen ], nil, nil, 0.1)
         cleanup
-        exit
       end
 
       @semaphore.synchronize {
@@ -209,6 +208,10 @@ class Dzen
 
       # read all input from i3status, use last line of input
       while @i3status && IO.select([ @i3status ], nil, nil, 0.1)
+        if @i3status.eof?
+          cleanup
+        end
+
         # [{"name":"wireless","instance":"iwn0","full_text":"up|166 dBm"},...
         if m = @i3status.gets.to_s.match(/^,?(\[\{.*)/)
           @i3status_cache = {}
@@ -316,8 +319,7 @@ class Dzen
         @cache[c][:data] = "error"
         @cache[c][:error] = Time.now.to_i
       rescue StandardError => e
-        @cache[c][:data] = "error: #{e.inspect}"
-        STDERR.puts e.inspect, e.backtrace
+        @cache[c][:data] = "#{c} error: #{e.class}"
         @cache[c][:error] = Time.now.to_i
       end
       @cache[c][:last] = Time.now.to_i

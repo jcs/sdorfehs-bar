@@ -543,27 +543,35 @@ class Dzen
         end
       end
 
-      if @i3status_cache[:ethernet].to_s.match(/up/)
+      if @i3status_cache[:ethernet] &&
+      @i3status_cache[:ethernet]["full_text"].to_s.match(/up/)
         eth_connected = true
       end
 
       wi = ""
       eth = ""
 
-      if wifi_connected && wifi_signal > 0
-        if wifi_signal >= 75
-          wi << "^fg()"
-        elsif wifi_signal >= 50
-          wi << "^fg(#{color(:alert)})"
-        else
-          wi << "^fg(#{color(:warn)})"
+      if wifi_up
+        wi = "^ca(1,sh -c 'sudo ifconfig " <<
+          "#{@i3status_cache[:wireless]["instance"]} scan >/dev/null')"
+
+        if wifi_connected && wifi_signal > 0
+          if wifi_signal >= 75
+            wi << "^fg()"
+          elsif wifi_signal >= 50
+            wi << "^fg(#{color(:alert)})"
+          else
+            wi << "^fg(#{color(:warn)})"
+          end
+
+          wi << "wifi^fg()"
+        elsif wifi_connected
+          wi << "^fg()wifi"
+        elsif wifi_up
+          wi << "^fg(#{color(:disabled)})wifi^fg()"
         end
 
-        wi << "wifi^fg()"
-      elsif wifi_connected
-        wi = "^fg()wifi"
-      elsif wifi_up
-        wi = "^fg(#{color(:disabled)})wifi^fg()"
+        wi << "^ca()"
       end
 
       if eth_connected

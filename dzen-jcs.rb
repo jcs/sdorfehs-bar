@@ -216,7 +216,7 @@ class Dzen
         if m = @i3status.gets.to_s.match(/^,?(\[\{.*)/)
           @i3status_cache = {}
           JSON.parse(m[1]).each do |mod|
-            @i3status_cache[mod["name"].to_sym] = mod["full_text"]
+            @i3status_cache[mod["name"].to_sym] = mod
           end
         end
       end
@@ -365,7 +365,7 @@ class Dzen
       ac_on = false
       run_rate = 0.0
 
-      @i3status_cache[:battery].split("|").each_with_index do |d,x|
+      @i3status_cache[:battery]["full_text"].split("|").each_with_index do |d,x|
         case x
         when 0
           ac_on = (d == "CHR")
@@ -458,7 +458,7 @@ class Dzen
       temps = []
 
       if @i3status_cache[:cpu_temperature]
-        temps.push @i3status_cache[:cpu_temperature].to_f
+        temps.push @i3status_cache[:cpu_temperature]["full_text"].to_f
       end
 
       m = 0.0
@@ -527,7 +527,8 @@ class Dzen
       wifi_signal = 0
       eth_connected = false
 
-      if m = @i3status_cache[:wireless].to_s.match(/^up\|(.+)$/)
+      if @i3status_cache[:wireless] &&
+      (m = @i3status_cache[:wireless]["full_text"].to_s.match(/^up\|(.+)$/))
         wifi_up = true
 
         if m[1] == "?"
@@ -590,16 +591,16 @@ class Dzen
     update_every do
       o = "^fg()"
 
-      if @i3status_cache[:volume].match(/mute/)
+      if @i3status_cache[:volume]["full_text"].match(/mute/)
         o << "^fg(#{color(:disabled)})"
       end
 
       o << "vol^fg(#{color(:disabled)})/"
 
-      if @i3status_cache[:volume].match(/mute/)
+      if @i3status_cache[:volume]["full_text"].match(/mute/)
         o << "---"
       else
-        vol = @i3status_cache[:volume].gsub(/[^0-9]/, "").to_i
+        vol = @i3status_cache[:volume]["full_text"].gsub(/[^0-9]/, "").to_i
 
         if vol >= 75
           o << "^fg(#{color(:alert)})"

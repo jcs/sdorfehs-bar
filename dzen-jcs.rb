@@ -386,7 +386,7 @@ class Dzen
         blink = false
         if batt_perc[i] <= 10.0
           out << "^fg(#{color(:emerg)})"
-          if total_perc < 10.0
+          if total_perc < 10.0 && !ac_on
             blink = true
           end
         elsif batt_perc[i] < 30.0

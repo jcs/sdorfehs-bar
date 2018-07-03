@@ -39,7 +39,7 @@ config = {
   :blink => [ 0.85, 0.15 ],
 
   # dzen bar height
-  :height => `ratpoison -c 'set padding'`.split(" ")[1].to_i,
+  :height => `ratpoison -c 'set padding'`.split(" ")[1].to_i - 1,
 
   # dzen bar width, half of the screen
   :width => screenwidth / 2,
@@ -48,7 +48,7 @@ config = {
   :rightpadding => `ratpoison -c 'set barpadding'`.split(" ")[0].to_i,
 
   # top padding
-  :toppadding => 5,
+  :toppadding => 0,
 
   # font for dzen to use
   :font => `ratpoison -c 'set font'`.strip,
@@ -327,6 +327,8 @@ class Dzen
       rescue StandardError => e
         @cache[c][:data] = "#{c} error: #{e.class}"
         @cache[c][:error] = Time.now.to_i
+        STDERR.puts e
+        STDERR.puts e.backtrace.join("\n")
       end
       @cache[c][:last] = Time.now.to_i
     end
@@ -582,9 +584,9 @@ class Dzen
           "#{@i3status_cache[:wireless]["instance"]} scan >/dev/null')"
 
         if wifi_connected && wifi_signal > 0
-          if wifi_signal >= 75
+          if wifi_signal >= 60
             wi << "^fg()"
-          elsif wifi_signal >= 50
+          elsif wifi_signal >= 45
             wi << "^fg(#{color(:alert)})"
           else
             wi << "^fg(#{color(:warn)})"

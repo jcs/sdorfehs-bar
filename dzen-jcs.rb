@@ -56,8 +56,6 @@ config = {
   :colors => {
     :bg => `ratpoison -c 'set bgcolor'`.strip,
     :fg => `ratpoison -c 'set fgcolor'`.strip,
-    :notification => "white",
-    :notification_title => "yellow",
     :disabled => "#90a1ad",
     :ok => "#87de99",
     :warn => "orange",
@@ -81,17 +79,8 @@ config = {
   :cryptocurrencies => {},
 
   # which modules are enabled, and in which order
-  :module_order => [ :weather, :temp, :cryptocurrencies, :network, :power,
-    :date, :time ],
-
-  # for dbus notification integration
-  :dbus_notifications => false,
-
-  # font for notifications
-  :notification_font => "fixed",
-
-  # time to sleep while showing a notification
-  :notification_wait => 5,
+  :module_order => [ :weather, :thermals, :cryptocurrencies, :network, :power,
+    :audio, :date, :time ],
 }
 
 # override defaults by eval'ing ~/.dzen-jcs.rb
@@ -111,38 +100,54 @@ class String
   end
 end
 
-def caller_method_name
-  parse_caller(caller(2).first).last
-end
-
-def parse_caller(at)
-  if m = at.match(/^(.+?):(\d+)(?::in `(.*)')?/)
-    [ m[1], m[2].to_i, m[3] ]
-  end
-end
-
-class Dzen
+class Controller
   attr_reader :config
   attr_writer :dying
 
+  MODULES = {
+    :audio => {
+      :i3status => :volume,
+    },
+    :cryptocurrencies => {
+      :frequency => 60 * 5,
+    },
+    :date => {
+      :frequency => 1,
+    },
+    :network => {
+      :i3status => [ :ethernet, :wireless ],
+    },
+    :power => {
+      :i3status => :battery,
+    },
+    :thermals => {
+      :i3status => :cpu_temperature,
+    },
+    :time => {
+      :frequency => 1,
+    },
+    :weather => {
+      :frequency => 60 * 10,
+    },
+  }
+
   def initialize(config)
     @config = config
-    @cache = {}
+    @data = {}
+    @threads = {}
+
     @dzen = nil
+    @dzen_output = ""
     @i3status = nil
+    @i3status_data = {}
 
     @dying = false
 
-    @notifications = []
-    @semaphore = Mutex.new
+    @mutex = Mutex.new
   end
 
   def color(col)
     config[:colors][col]
-  end
-
-  def show(str)
-    @dzen.puts str
   end
 
   def clense(str)
@@ -150,32 +155,20 @@ class Dzen
     str.to_s.gsub(/\^/, "\\^").gsub("\n", " ").gsub("\r", "")
   end
 
-  def show_notification(title, notification)
-    max_len = 150
-
-    title = clense(title)
-    notification = clense(notification)
-
-    if title.length > max_len
-      title = title[0, max_len - 50]
-      notification = notification[0, 50]
-    else
-      notification = notification[0, max_len - title.length]
-    end
-
-    @semaphore.synchronize {
-      @notifications.push "^fn(#{config[:notification_font]})" <<
-        "^fg(#{color(:notification_title)})#{title}: " <<
-        "^fg(#{color(:notification)})#{notification}" <<
-        "^fg()^fn(#{config[:font]})"
-    }
-  end
-
   def run!
     if !File.exists?("/usr/local/bin/i3status")
       STDERR.puts "i3status not found"
       exit 1
     end
+
+    # try to take dzen2 and i3status down with us
+    [ "QUIT", "TERM", "INT" ].each do |sig|
+      Kernel.trap(sig) do
+        @dying = true
+      end
+    end
+
+    Thread.abort_on_exception = true
 
     # bring up a writer to dzen
     @dzen = IO.popen([
@@ -192,65 +185,126 @@ class Dzen
       "-p"
     ], "w+")
 
-    # and a reader from i3status
-    @i3status_cache = {}
-    @i3status = IO.popen("/usr/local/bin/i3status", "r+")
+    # send data to dzen and handle blinking
+    @threads[:dzen] = Thread.new do
+      while @dzen
+        break if @dying
 
-    # it may take a while for components to start up and cache things, so tell
-    # the user
-    self.show "^fg(#{color(:alert)}) starting up ^fg()"
+        output = @dzen_output.dup
 
-    while @dzen do
-      if @dying || IO.select([ @dzen ], nil, nil, 0.1)
-        cleanup
+        if output.match(/\^blink\(/)
+          output, dark = unblink(output)
+
+          # flash output, darken it for a brief moment, then show it again
+          @dzen.puts output
+          sleep config[:blink].first
+          @dzen.puts dark
+          sleep config[:blink].last
+          @dzen.puts output
+        else
+          @dzen.puts output
+        end
+
+        Thread.stop
       end
 
-      @semaphore.synchronize {
-        while @notifications.any?
-          self.show @notifications.shift
-          sleep config[:notification_wait]
-        end
-      }
+      cleanup_and_exit
+    end
 
-      # read all input from i3status, use last line of input
-      while @i3status && IO.select([ @i3status ], nil, nil, 0.1)
-        if @i3status.eof?
-          cleanup
-        end
+    # same for i3status
+    @i3status = IO.popen("/usr/local/bin/i3status", "r+")
+
+    # cache new data, then wakeup any threads that are sleeping waiting for
+    # that data
+    @threads[:i3status] = Thread.new do
+      while @i3status && !@i3status.eof?
+        break if @dying
 
         # [{"name":"wireless","instance":"iwn0","full_text":"up|166 dBm"},...
-        if m = @i3status.gets.to_s.match(/^,?(\[\{.*)/)
-          @i3status_cache = {}
-          JSON.parse(m[1]).each do |mod|
-            @i3status_cache[mod["name"].to_sym] = mod
+        next if !(m = @i3status.gets.to_s.match(/^,?(\[\{.*)/))
+
+        new_data = {}
+        JSON.parse(m[1]).each do |mod|
+          new_data[mod["name"].to_sym] = mod
+        end
+
+        mod_updates = []
+        (new_data.keys + @i3status_data.keys).uniq.each do |k,v|
+          if @i3status_data[k] != new_data[k]
+            # find any modules that are listening for this i3status data
+            MODULES.each do |mod,modp|
+              next if !modp[:i3status]
+
+              if modp[:i3status].is_a?(Array)
+                if modp[:i3status].include?(k)
+                  mod_updates.push mod
+                end
+              elsif modp[:i3status] == k
+                mod_updates.push mod
+              end
+            end
+          end
+        end
+
+        @i3status_data = new_data
+
+        mod_updates.uniq.each do |mod|
+          if @threads[mod]
+            @threads[mod].wakeup
           end
         end
       end
 
-      # build output by concatting each module's output
-      output = config[:module_order].map{|a| eval(a.to_s) }.
-        reject{|part| !part }.join(sep)
+      cleanup_and_exit
+    end
 
-      # handle ^blink() internally
-      if output.match(/\^blink\(/)
-        output, dark = unblink(output)
-
-        # flash output, darken it for a brief moment, then show it again
-        self.show output
-        sleep config[:blink].first
-        self.show dark
-        sleep config[:blink].last
-        self.show output
-      else
-        self.show output
-
-        sleep 1
+    # if either child dies, take us down
+    [ :dzen, :i3status ].each do |child|
+      @threads[:"#{child}_watcher"] = Thread.new do
+        Process.waitpid(self.instance_variable_get("@#{child}").pid)
+        STDERR.puts "#{child} exited #{$?.exitstatus}"
+        cleanup_and_exit
       end
     end
+
+    # spin up threads for each module
+    config[:module_order].each do |mod|
+      @threads[mod] = Thread.new do
+        while true
+          break if @dying
+
+          begin
+            ret = self.send(mod)
+
+          rescue Timeout::Error
+            ret = "^fg(#{color(:alert)})timeout error^fg()"
+          rescue StandardError => e
+            ret = "^fg(#{color(:alert)})error: #{e.class}^fg()"
+            STDERR.puts e
+            STDERR.puts e.backtrace.join("\n")
+          end
+
+          update_data(mod, ret)
+
+          if MODULES[mod][:frequency]
+            sleep MODULES[mod][:frequency]
+          else
+            Thread.stop
+          end
+        end
+      end
+    end
+
+    # hang around as long as everything is running
+    @threads.each do |k,v|
+      v.join
+    end
+
+    cleanup_and_exit
   end
 
   # kill dzen2/i3status when we die
-  def cleanup
+  def cleanup_and_exit
     if @dzen
       Process.kill(9, @dzen.pid)
     end
@@ -259,8 +313,24 @@ class Dzen
       Process.kill(9, @i3status.pid)
     end
 
-    exit
   rescue
+  ensure
+    exit
+  end
+
+  def update_data(mod, ret)
+    @mutex.synchronize do
+      if @data[mod] == ret
+        return
+      end
+
+      @data[mod] = ret
+
+      @dzen_output = config[:module_order].map{|m| @data[m] }.
+        reject{|d| !d }.join(sep)
+    end
+
+    @threads[:dzen].wakeup
   end
 
   # find ^blink() strings and return a stripped out version and a dark version
@@ -312,416 +382,315 @@ class Dzen
     return [ new_str, dark_str ]
   end
 
-  def update_every(seconds = 1)
-    c = caller_method_name
-    @cache[c] ||= { :last => nil, :data => nil, :error => nil }
-
-    if (@cache[c][:error] && (Time.now.to_i - @cache[c][:error] > 15)) ||
-    !@cache[c][:last] || (Time.now.to_i - @cache[c][:last] > seconds)
-      begin
-        @cache[c][:data] = yield
-        @cache[c][:error] = nil
-      rescue Timeout::Error
-        @cache[c][:data] = "error"
-        @cache[c][:error] = Time.now.to_i
-      rescue StandardError => e
-        @cache[c][:data] = "#{c} error: #{e.class}"
-        @cache[c][:error] = Time.now.to_i
-        STDERR.puts e
-        STDERR.puts e.backtrace.join("\n")
-      end
-      @cache[c][:last] = Time.now.to_i
-    end
-
-    @cache[c][:data]
+  # separator bar
+  def sep
+    "^fn(courier new:size=10)   ^fn(#{config[:font]})"
   end
 
   # data-collection routines
 
-  # show the bluetooth interface status
+  # audio volume, or mute
+  def audio
+    return nil if !@i3status_data[:volume]
+
+    o = "^fg()"
+
+    if @i3status_data[:volume]["full_text"].match(/mute/)
+      o << "^fg(#{color(:disabled)})"
+    end
+
+    o << "vol^fg(#{color(:disabled)})/"
+
+    if @i3status_data[:volume]["full_text"].match(/mute/)
+      o << "---"
+    else
+      vol = @i3status_data[:volume]["full_text"].gsub(/[^0-9]/, "").to_i
+
+      if vol >= 75
+        o << "^fg(#{color(:alert)})"
+      else
+        o << "^fg()"
+      end
+
+      o << "#{vol}^fg(#{color(:disabled)})%"
+    end
+
+    o << "^fg()"
+  end
+
+  # bluetooth interface status
   def bluetooth
-    update_every(30) do
-      up = false
-      present = false
+    up = false
+    present = false
 
-      b = IO.popen("/usr/local/sbin/btconfig")
-      b.readlines.each do |sc|
-        if sc.match(/ubt\d/)
-          present = true
-          if sc.match(/UP/)
-            up = true
-          end
+    b = IO.popen("/usr/local/sbin/btconfig")
+    b.readlines.each do |sc|
+      if sc.match(/ubt\d/)
+        present = true
+        if sc.match(/UP/)
+          up = true
         end
       end
-      b.close
-
-      present ? "^fg(#{color(up ? :ok : :disabled)})bt^fg()" : nil
     end
+    b.close
+
+    present ? "^fg(#{color(up ? :ok : :disabled)})bt^fg()" : nil
   end
 
+  # prices of watched cryptocurrencies
   def cryptocurrencies
-    update_every(60 * 5) do
-      if config[:cryptocurrencies].any?
-        sd = Net::HTTP.get(URI.parse("https://min-api.cryptocompare.com/" +
-          "data/pricemulti?fsyms=#{config[:cryptocurrencies].keys.join(",")}" +
-          "&tsyms=USD"))
+    return nil if !config[:cryptocurrencies].any?
 
-        js = JSON.parse(sd)
-        # => {"ETH"=>{"USD"=>916.69}, "BTC"=>{"USD"=>14904.82}}
+    sd = Net::HTTP.get(URI.parse("https://min-api.cryptocompare.com/" +
+      "data/pricemulti?fsyms=#{config[:cryptocurrencies].keys.join(",")}" +
+      "&tsyms=USD"))
 
-        out = []
-        js.each do |cur,usd|
-          c = config[:cryptocurrencies][cur.upcase.to_sym]
-          if !c
-            next
-          end
+    js = JSON.parse(sd)
+    # => {"ETH"=>{"USD"=>916.69}, "BTC"=>{"USD"=>14904.82}}
 
-          t = "#{cur.downcase} $#{usd["USD"].floor}"
+    out = []
+    js.each do |cur,usd|
+      c = config[:cryptocurrencies][cur.upcase.to_sym]
+      if !c
+        next
+      end
 
-          if c[:qty]
-            quote = usd["USD"] * c[:qty].to_f
-
-            if c[:cost]
-              change = quote - c[:cost]
-
-              color = ""
-              if change == 0.0
-                color = ""
-                change = "=$#{change.floor}"
-              elsif change > 0.0
-                color = color(:ok)
-                change = "+$#{change.floor}"
-              elsif change < 0.0
-                color = color(:emerg)
-                change = "-$#{change.abs.ceil}"
-              end
-
-              t << " ^fg(#{color})#{change}^fg()"
-            else
-              t << " =$#{quote.floor}"
-            end
-          end
-
-          out.push t
-        end
-
-        out.join(" ")
+      curlabel = case cur.downcase
+      when "btc"
+        "^fn(courier new:size=13)^fg(#ccc)\u0243^fg()^fn(#{config[:font]})"
+      when "eth"
+        "^fn(courier new:size=13)^fg(#ccc)\u039E^fg()^fn(#{config[:font]})"
       else
-        nil
-      end
-    end
-  end
-
-  # show the date
-  def date
-    update_every do
-      (Time.now.strftime("%a %b %-d")).downcase
-    end
-  end
-
-  # show the ac status, then each battery's percentage of power left
-  def power
-    update_every do
-      batt_max = batt_left = batt_perc = {}, {}, {}
-      ac_on = false
-      run_rate = 0.0
-
-      @i3status_cache[:battery]["full_text"].split("|").each_with_index do |d,x|
-        case x
-        when 0
-          ac_on = (d == "CHR")
-        when 1
-          batt_perc = { 0 => d.to_i }
-        when 2
-          run_rate = d.to_f
-        end
+        cur.downcase
       end
 
-      out = "^fg(#{ac_on ? "" : color(:disabled)})ac"
+      t = "#{curlabel} $#{usd["USD"].floor}"
 
-      total_perc = batt_perc.values.inject{|a,b| a + b }
+      if c[:qty]
+        quote = usd["USD"] * c[:qty].to_f
 
-      batt_perc.keys.each do |i|
-        out << "^fg(#{color(:disabled)})/"
+        if c[:cost]
+          change = quote - c[:cost]
 
-        blink = false
-        if batt_perc[i] <= 10.0
-          out << "^fg(#{color(:emerg)})"
-          if total_perc < 10.0 && !ac_on
-            blink = true
+          color = ""
+          if change == 0.0
+            color = ""
+            change = "=$#{change.floor}"
+          elsif change > 0.0
+            color = color(:ok)
+            change = "+$#{change.floor}"
+          elsif change < 0.0
+            color = color(:emerg)
+            change = "-$#{change.abs.ceil}"
           end
-        elsif batt_perc[i] < 30.0
-          out << "^fg(#{color(:alert)})"
+
+          t << " ^fg(#{color})#{change}^fg()"
         else
-          out << "^fg()"
+          t << " =$#{quote.floor}"
         end
-
-        out << (blink ? "^blink(" : "") + batt_perc[i].to_s +
-          (blink ? ")" : "") + "^fg(#{color(:disabled)})%^fg()"
       end
 
-      if !batt_perc.any?
-        out << "^fg(#{color(:disabled)})/?^fg()"
-      end
-
-      if run_rate > 0.0 && !ac_on
-        out << "^fg(#{color(:disabled)})/^fg()"
-
-        if run_rate >= 20.0
-          out << "^fg(#{color(:emerg)})"
-        elsif run_rate >= 10.0
-          out << "^fg(#{color(:alert)})"
-        end
-
-        out << "#{sprintf("%0.1f", run_rate)}w^fg()"
-      end
-
-      out
+      out.push t
     end
+
+    out.join(" ")
   end
 
-  # show any temperature sensors that are too hot
-  def temp
-    update_every do
-      temps = []
+  def date
+    Time.now.strftime("%a %b %-d").downcase
+  end
 
-      if @i3status_cache[:cpu_temperature]
-        temps.push @i3status_cache[:cpu_temperature]["full_text"].to_f
-      end
+  # wireless interface state and signal quality, ethernet interface status
+  def network
+    wifi_up = false
+    wifi_connected = false
+    wifi_signal = 0
+    eth_connected = false
 
-      m = 0.0
-      temps.each{|t| m += t }
-      fh = (9.0 / 5.0) * (m / temps.length.to_f) + 32.0
+    if @i3status_data[:wireless] &&
+    (m = @i3status_data[:wireless]["full_text"].to_s.match(/^up\|(.+)$/))
+      wifi_up = true
 
-      if fh > config[:temp_min]
-        "^fg(#{color(:alert)})^blink(#{fh.to_i})^fg(#{color(:disabled)})f^fg()"
+      if m[1] == "?"
+        wifi_connected = false
       else
-        nil
+        wifi_connected = true
+        if n = m[1].match(/(\d+)%/) # old
+          wifi_signal = n[1].to_i
+        elsif n = m[1].match(/(-?\d+) dBm/)
+          wifi_signal = [ 2 * (n[1].to_i + 100), 100 ].min
+        end
       end
+    end
+
+    if @i3status_data[:ethernet] &&
+    @i3status_data[:ethernet]["full_text"].to_s.match(/up/)
+      eth_connected = true
+    end
+
+    wi = ""
+    eth = ""
+
+    if wifi_up
+      wi = "^ca(1,sh -c 'sudo ifconfig " <<
+        "#{@i3status_data[:wireless]["instance"]} scan >/dev/null')"
+
+      if wifi_connected && wifi_signal > 0
+        if wifi_signal >= 60
+          wi << "^fg()"
+        elsif wifi_signal >= 45
+          wi << "^fg(#{color(:alert)})"
+        else
+          wi << "^fg(#{color(:warn)})"
+        end
+
+        wi << "wifi^fg()"
+      elsif wifi_connected
+        wi << "^fg()wifi"
+      elsif wifi_up
+        wi << "^fg(#{color(:disabled)})wifi^fg()"
+      end
+
+      wi << "^ca()"
+    end
+
+    if eth_connected
+      eth = "^fg()eth"
+    end
+
+    out = nil
+    if wi != ""
+      out = wi
+    end
+    if eth != ""
+      if out
+        out << "^fg(#{color(:disabled)}), " << eth
+      else
+        out = eth
+      end
+    end
+
+    out
+  end
+
+  # ac status, then each battery's percentage of power left
+  def power
+    return nil if !@i3status_data[:battery]
+
+    batt_max = batt_left = batt_perc = {}, {}, {}
+    ac_on = false
+    run_rate = 0.0
+
+    @i3status_data[:battery]["full_text"].split("|").each_with_index do |d,x|
+      case x
+      when 0
+        ac_on = (d == "CHR")
+      when 1
+        batt_perc = { 0 => d.to_i }
+      when 2
+        run_rate = d.to_f
+      end
+    end
+
+    out = "^fg(#{ac_on ? "" : color(:disabled)})ac"
+
+    total_perc = batt_perc.values.inject{|a,b| a + b }
+
+    batt_perc.keys.each do |i|
+      out << "^fg(#{color(:disabled)})/"
+
+      blink = false
+      if batt_perc[i] <= 10.0
+        out << "^fg(#{color(:emerg)})"
+        if total_perc < 10.0 && !ac_on
+          blink = true
+        end
+      elsif batt_perc[i] < 30.0
+        out << "^fg(#{color(:alert)})"
+      else
+        out << "^fg()"
+      end
+
+      out << (blink ? "^blink(" : "") + batt_perc[i].to_s +
+        (blink ? ")" : "") + "^fg(#{color(:disabled)})%^fg()"
+    end
+
+    if !batt_perc.any?
+      out << "^fg(#{color(:disabled)})/?^fg()"
+    end
+
+    if run_rate > 0.0 && !ac_on
+      out << "^fg(#{color(:disabled)})/^fg()"
+
+      if run_rate >= 20.0
+        out << "^fg(#{color(:emerg)})"
+      elsif run_rate >= 10.0
+        out << "^fg(#{color(:alert)})"
+      end
+
+      out << "#{sprintf("%0.1f", run_rate)}w^fg()"
+    end
+
+    out
+  end
+
+  # any temperature sensors that are too hot
+  def thermals
+    return nil if !@i3status_data[:cpu_temperature]
+
+    temps = [
+      @i3status_data[:cpu_temperature]["full_text"].to_f
+    ]
+
+    m = 0.0
+    temps.each{|t| m += t }
+    fh = (9.0 / 5.0) * (m / temps.length.to_f) + 32.0
+
+    if fh > config[:temp_min]
+      "^fg(#{color(:alert)})^blink(#{fh.to_i})^fg(#{color(:disabled)})f^fg()"
+    else
+      nil
     end
   end
 
   def time
-    update_every do
-      t = Time.now
-      "^fg()" << t.strftime("%H") << "^fg(#{color(:disabled)}):^fg()" <<
-        t.strftime("%M")
-    end
+    t = Time.now
+    "^fg()" << t.strftime("%H") << "^fg(#{color(:disabled)}):^fg()" <<
+      t.strftime("%M")
   end
 
-  # show the current temperature/humidity for today
+  # current temperature/humidity
   def weather
-    update_every(60 * 10) do
-      if !config[:weather_api_key].any?
-        next nil
-      end
+    return nil if !config[:weather_api_key].any?
 
-      if !config[:weather_lat_long].any?
-        js = JSON.parse(Net::HTTP.get(URI.parse("http://ip-api.com/json")))
-        if js["lat"] && js["lon"]
-          config[:weather_lat_long] = "#{js["lat"]},#{js["lon"]}"
-        end
-      end
-
-      if !config[:weather_lat_long].any?
-        next nil
-      end
-
-      js = JSON.parse(Net::HTTP.get(URI.parse(
-        "https://api.darksky.net/forecast/" + config[:weather_api_key] +
-        "/" + config[:weather_lat_long])))
-
-      w = js["currently"]["summary"].downcase
-
-      # add current temperature
-      w << " ^fg()" << js["currently"]["apparentTemperature"].to_i.to_s <<
-        "^fg(#{color(:disabled)})f^fg()"
-
-      # add current humidity
-      humidity = js["currently"]["humidity"].to_f * 100.0
-      w << "^fg(#{color(:disabled)})/^fg(" <<
-        (humidity > 60 ? color(:alert) : "") <<
-        ")" << humidity.to_i.to_s << "^fg(#{color(:disabled)})%^fg()"
-
-      w
-    end
-  end
-
-  # show the network interface status
-  def network
-    update_every do
-      wifi_up = false
-      wifi_connected = false
-      wifi_signal = 0
-      eth_connected = false
-
-      if @i3status_cache[:wireless] &&
-      (m = @i3status_cache[:wireless]["full_text"].to_s.match(/^up\|(.+)$/))
-        wifi_up = true
-
-        if m[1] == "?"
-          wifi_connected = false
-        else
-          wifi_connected = true
-          if n = m[1].match(/(\d+)%/) # old
-            wifi_signal = n[1].to_i
-          elsif n = m[1].match(/(-?\d+) dBm/)
-            wifi_signal = [ 2 * (n[1].to_i + 100), 100 ].min
-          end
-        end
-      end
-
-      if @i3status_cache[:ethernet] &&
-      @i3status_cache[:ethernet]["full_text"].to_s.match(/up/)
-        eth_connected = true
-      end
-
-      wi = ""
-      eth = ""
-
-      if wifi_up
-        wi = "^ca(1,sh -c 'sudo ifconfig " <<
-          "#{@i3status_cache[:wireless]["instance"]} scan >/dev/null')"
-
-        if wifi_connected && wifi_signal > 0
-          if wifi_signal >= 60
-            wi << "^fg()"
-          elsif wifi_signal >= 45
-            wi << "^fg(#{color(:alert)})"
-          else
-            wi << "^fg(#{color(:warn)})"
-          end
-
-          wi << "wifi^fg()"
-        elsif wifi_connected
-          wi << "^fg()wifi"
-        elsif wifi_up
-          wi << "^fg(#{color(:disabled)})wifi^fg()"
-        end
-
-        wi << "^ca()"
-      end
-
-      if eth_connected
-        eth = "^fg()eth"
-      end
-
-      out = nil
-      if wi != ""
-        out = wi
-      end
-      if eth != ""
-        if out
-          out << "^fg(#{color(:disabled)}), " << eth
-        else
-          out = eth
-        end
-      end
-
-      out
-    end
-  end
-
-  # show the audio volume
-  def audio
-    update_every do
-      o = "^fg()"
-
-      if @i3status_cache[:volume]["full_text"].match(/mute/)
-        o << "^fg(#{color(:disabled)})"
-      end
-
-      o << "vol^fg(#{color(:disabled)})/"
-
-      if @i3status_cache[:volume]["full_text"].match(/mute/)
-        o << "---"
-      else
-        vol = @i3status_cache[:volume]["full_text"].gsub(/[^0-9]/, "").to_i
-
-        if vol >= 75
-          o << "^fg(#{color(:alert)})"
-        else
-          o << "^fg()"
-        end
-
-        o << "#{vol}^fg(#{color(:disabled)})%"
-      end
-
-      o << "^fg()"
-      o
-    end
-  end
-
-  # separator bar
-  def sep
-    "   "
-  end
-end
-
-@dzen = Dzen.new(config)
-
-# try to take dzen2 and i3status down with us
-[ "QUIT", "TERM", "INT" ].each{|sig| Kernel.trap(sig) { @dzen.dying = true } }
-
-if config[:dbus_notifications]
-  require "dbus"
-
-  class NotificationService < DBus::Object
-    def dzen=(dzen)
-      @dzen = dzen
-    end
-
-    # conforms to https://developer.gnome.org/notification-spec/
-    dbus_interface "org.freedesktop.Notifications" do
-      # susssasa{sv}i
-      dbus_method :Notify, [
-      "in app_name:s",
-      "in replaces_id:u",
-      "in app_icon:s",
-      "in summary:s",
-      "in body:s",
-      "in actions:as",
-      "in hints:a{sv}",
-      "in expire_timeout:i" ].join(", ") do |app_name, replaces_id, app_icon,
-      summary, body, actions, hints, expire_timeout|
-        @dzen.show_notification(summary.to_s == "" ? app_name : summary, body)
-      end
-
-      dbus_method :CloseNotification, "in id:u" do |*args|
-        # ignore for now
-      end
-
-      dbus_method :GetServerInformation, [
-      "out name:s",
-      "out vendor:s",
-      "out version:s",
-      "out spec_version:s" ].join(", ") do |*args|
-        [ "dzen-jcs", "jcs", "1", "1.0" ]
-      end
-
-      dbus_method :GetCapabilities, "out return_caps:as" do |*args|
-        [
-          [ "action-icons", "actions", "body", "body-hyperlinks", "body-images",
-            "body-markup", "icon-multi", "icon-static", "persistence", "sound" ]
-        ]
+    if !config[:weather_lat_long].any?
+      js = JSON.parse(Net::HTTP.get(URI.parse("http://ip-api.com/json")))
+      if js["lat"] && js["lon"]
+        config[:weather_lat_long] = "#{js["lat"]},#{js["lon"]}"
       end
     end
+
+    return nil if !config[:weather_lat_long].any?
+
+    js = JSON.parse(Net::HTTP.get(URI.parse(
+      "https://api.darksky.net/forecast/" + config[:weather_api_key] +
+      "/" + config[:weather_lat_long])))
+
+    w = js["currently"]["summary"].downcase
+
+    # add current temperature
+    w << " ^fg()" << js["currently"]["apparentTemperature"].to_i.to_s <<
+      "^fg(#{color(:disabled)})f^fg()"
+
+    # add current humidity
+    humidity = js["currently"]["humidity"].to_f * 100.0
+    w << "^fg(#{color(:disabled)})/^fg(" <<
+      (humidity > 60 ? color(:alert) : "") <<
+      ")" << humidity.to_i.to_s << "^fg(#{color(:disabled)})%^fg()"
+
+    w
   end
-
-  # start listening for dbus notifications
-  Thread.abort_on_exception = true
-  Thread.new {
-    dbus = DBus::SessionBus.instance
-    service = dbus.request_service("org.freedesktop.Notifications")
-    ns = NotificationService.new("/org/freedesktop/Notifications")
-    ns.dzen = @dzen
-    service.export(ns)
-
-    dbusloop = DBus::Main.new
-    dbusloop << dbus
-    dbusloop.run
-  }
 end
 
 # on with the show
-@dzen.run!
+Controller.new(config).run!

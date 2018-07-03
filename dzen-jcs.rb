@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 #
-# Copyright (c) 2009-2017 joshua stein <jcs@jcs.org>
+# Copyright (c) 2009-2018 joshua stein <jcs@jcs.org>
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -68,15 +68,21 @@ config = {
   # minimum temperature (f) at which sensors will be shown
   :temp_min => 160,
 
-  # darksky.net api key and latitude/longitude for which to fetch weather
+  # darksky.net api key used to fetch weather
   :weather_api_key => "",
+
+  # lat and long for weather joined by a comma; if blank, an api will be used
+  # to get the lat/long based on ip address
   :weather_lat_long => "",
 
-  # stocks symbols to watch
-  :stocks => {},
+  # cryptocurrencies to watch, as a hash of each symbol to a hash containing
+  # the :qty and :cost of amounts held
+  # https://www.cryptocompare.com/api/#-api-data-price-
+  :cryptocurrencies => {},
 
   # which modules are enabled, and in which order
-  :module_order => [ :weather, :temp, :network, :power, :date, :time ],
+  :module_order => [ :weather, :temp, :cryptocurrencies, :network, :power,
+    :date, :time ],
 
   # for dbus notification integration
   :dbus_notifications => false,
@@ -351,6 +357,59 @@ class Dzen
     end
   end
 
+  def cryptocurrencies
+    update_every(60 * 5) do
+      if config[:cryptocurrencies].any?
+        sd = Net::HTTP.get(URI.parse("https://min-api.cryptocompare.com/" +
+          "data/pricemulti?fsyms=#{config[:cryptocurrencies].keys.join(",")}" +
+          "&tsyms=USD"))
+
+        js = JSON.parse(sd)
+        # => {"ETH"=>{"USD"=>916.69}, "BTC"=>{"USD"=>14904.82}}
+
+        out = []
+        js.each do |cur,usd|
+          c = config[:cryptocurrencies][cur.upcase.to_sym]
+          if !c
+            next
+          end
+
+          t = "#{cur.downcase} $#{usd["USD"].floor}"
+
+          if c[:qty]
+            quote = usd["USD"] * c[:qty].to_f
+
+            if c[:cost]
+              change = quote - c[:cost]
+
+              color = ""
+              if change == 0.0
+                color = ""
+                change = "=$#{change.floor}"
+              elsif change > 0.0
+                color = color(:ok)
+                change = "+$#{change.floor}"
+              elsif change < 0.0
+                color = color(:emerg)
+                change = "-$#{change.abs.ceil}"
+              end
+
+              t << " ^fg(#{color})#{change}^fg()"
+            else
+              t << " =$#{quote.floor}"
+            end
+          end
+
+          out.push t
+        end
+
+        out.join(" ")
+      else
+        nil
+      end
+    end
+  end
+
   # show the date
   def date
     update_every do
@@ -416,39 +475,6 @@ class Dzen
       end
 
       out
-    end
-  end
-
-  def stocks
-    update_every(60 * 5) do
-      # TODO: check time, don't bother polling outside of market hours
-      if config[:stocks].any?
-        sd = Net::HTTP.get(URI.parse("http://download.finance.yahoo.com/d/" +
-          "quotes.csv?s=" + config[:stocks].keys.join("+") + "&f=sp2l1"))
-
-        out = []
-        sd.split("\r\n").each do |line|
-          ticker, change, quote = line.split(",").map{|z| z.gsub(/"/, "") }
-
-          quote = sprintf("%0.2f", quote.to_f)
-          change = change.gsub(/%/, "").to_f
-
-          color = ""
-          if quote.to_f >= config[:stocks][ticker].to_f
-            color = color(:alert)
-          elsif change > 0.0
-            color = color(:ok)
-          elsif change < 0.0
-            color = color(:emerg)
-          end
-
-          out.push "#{ticker} ^fg(#{color})#{quote}^fg()"
-        end
-
-        out.join(", ")
-      else
-        nil
-      end
     end
   end
 

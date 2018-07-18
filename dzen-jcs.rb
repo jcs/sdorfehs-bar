@@ -79,8 +79,8 @@ config = {
   :cryptocurrencies => {},
 
   # which modules are enabled, and in which order
-  :module_order => [ :weather, :thermals, :cryptocurrencies, :network, :power,
-    :audio, :date, :time ],
+  :module_order => [ :weather, :thermals, :cryptocurrencies, :keepalive,
+    :network, :power, :audio, :date, :time ],
 }
 
 # override defaults by eval'ing ~/.dzen-jcs.rb
@@ -114,6 +114,9 @@ class Controller
     :date => {
       :frequency => 1,
     },
+    :keepalive => {
+      :frequency => 60,
+    },
     :network => {
       :i3status => [ :ethernet, :wireless ],
     },
@@ -142,6 +145,7 @@ class Controller
     @i3status_data = {}
 
     @dying = false
+    @refresh = true
 
     @mutex = Mutex.new
   end
@@ -166,6 +170,12 @@ class Controller
       Kernel.trap(sig) do
         @dying = true
       end
+    end
+
+    # signal to toggle keep alive
+    Kernel.trap("USR1") do
+      MODULES[:keepalive][:toggle] = true
+      @threads[:keepalive].wakeup
     end
 
     Thread.abort_on_exception = true
@@ -498,6 +508,26 @@ class Controller
 
   def date
     Time.now.strftime("%a %b %-d").downcase
+  end
+
+  def keepalive
+    @keepalive ||= false
+
+    if MODULES[:keepalive][:toggle]
+      @keepalive = !@keepalive
+      MODULES[:keepalive][:toggle] = false
+    end
+
+    if @keepalive
+      system("xdotool mousemove_relative 1 1; " <<
+        "xdotool mousemove_relative -- -1 -1")
+    end
+
+    # brightness emoji
+    "^ca(1,pkill -USR1 -f #{File.basename($0)})" <<
+      "^fn(noto emoji:size=13)^fg(#{@keepalive ? "" : color(:disabled)})" <<
+      "\u{1F506}^fg()^fn(#{config[:font]})" <<
+      "^ca()"
   end
 
   # wireless interface state and signal quality, ethernet interface status

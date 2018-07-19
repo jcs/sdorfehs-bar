@@ -56,6 +56,7 @@ config = {
   :colors => {
     :bg => `ratpoison -c 'set bgcolor'`.strip,
     :fg => `ratpoison -c 'set fgcolor'`.strip,
+    :symbol => "#bbbbbb",
     :disabled => "#90a1ad",
     :ok => "#87de99",
     :warn => "orange",
@@ -79,8 +80,8 @@ config = {
   :cryptocurrencies => {},
 
   # which modules are enabled, and in which order
-  :module_order => [ :weather, :thermals, :cryptocurrencies, :keepalive,
-    :network, :power, :audio, :date, :time ],
+  :module_order => [ :weather, :thermals, :cryptocurrencies, :cmus_controls,
+    :keepalive, :network, :power, :audio, :date, :time ],
 }
 
 # override defaults by eval'ing ~/.dzen-jcs.rb
@@ -107,6 +108,8 @@ class Controller
   MODULES = {
     :audio => {
       :i3status => :volume,
+    },
+    :cmus_controls => {
     },
     :cryptocurrencies => {
       :frequency => 60 * 5,
@@ -447,6 +450,26 @@ class Controller
     present ? "^fg(#{color(up ? :ok : :disabled)})bt^fg()" : nil
   end
 
+  # icons to control cmus
+  def cmus_controls
+    "^fn(noto emoji:size=13)" <<
+    "^ca(1,cmus-remote -r)" <<
+      #"^fg(#{color(:symbol)})" <<
+      "\u{23EA}" << # use \u23ee when emoji font supports it
+    "^ca()" <<
+    " " <<
+    "^ca(1,cmus-remote -u)" <<
+      #"^fg(#{color(:symbol)})" <<
+      "\u{25B6}" << # use \u23ef when emoji font supports it
+    "^ca()" <<
+    " " <<
+    "^ca(1,cmus-remote -n)" <<
+      #"^fg(#{color(:symbol)})" <<
+      "\u{23E9}" << # use \u23ed when emoji font supports it
+    "^ca()" <<
+    "^fn(#{config[:font]})"
+  end
+
   # prices of watched cryptocurrencies
   def cryptocurrencies
     return nil if !config[:cryptocurrencies].any?
@@ -467,9 +490,11 @@ class Controller
 
       curlabel = case cur.downcase
       when "btc"
-        "^fn(courier new:size=13)^fg(#ccc)\u0243^fg()^fn(#{config[:font]})"
+        "^fn(courier new:size=13)^fg(#{color(:symbol)})" <<
+          "\u{0243}^fg()^fn(#{config[:font]})"
       when "eth"
-        "^fn(courier new:size=13)^fg(#ccc)\u039E^fg()^fn(#{config[:font]})"
+        "^fn(courier new:size=13)^fg(#{color(:symbol)})" <<
+          "\u{039E}^fg()^fn(#{config[:font]})"
       else
         cur.downcase
       end

@@ -48,7 +48,7 @@ config = {
   :rightpadding => `ratpoison -c 'set barpadding'`.split(" ")[0].to_i,
 
   # top padding
-  :toppadding => 0,
+  :toppadding => 1,
 
   # font for dzen to use
   :font => `ratpoison -c 'set font'`.strip,
@@ -80,8 +80,8 @@ config = {
   :cryptocurrencies => {},
 
   # which modules are enabled, and in which order
-  :module_order => [ :weather, :thermals, :cryptocurrencies, :cmus_controls,
-    :keepalive, :network, :power, :audio, :date, :time ],
+  :module_order => [ :weather, :thermals, :cryptocurrencies, #:cmus_controls,
+    :keepalive, :audio, :network, :power, :date, :time ],
 }
 
 # override defaults by eval'ing ~/.dzen-jcs.rb
@@ -452,22 +452,29 @@ class Controller
 
   # icons to control cmus
   def cmus_controls
-    "^fn(noto emoji:size=13)" <<
     "^ca(1,cmus-remote -r)" <<
-      #"^fg(#{color(:symbol)})" <<
+      "^fg(#{color(:symbol)})" <<
+      "^fn(noto emoji:size=13)" <<
       "\u{23EA}" << # use \u23ee when emoji font supports it
+      "^fn(#{config[:font]})" <<
+      "^fg()" <<
     "^ca()" <<
     " " <<
     "^ca(1,cmus-remote -u)" <<
-      #"^fg(#{color(:symbol)})" <<
+      "^fg(#{color(:symbol)})" <<
+      "^fn(noto emoji:size=13)" <<
       "\u{25B6}" << # use \u23ef when emoji font supports it
+      "^fn(#{config[:font]})" <<
+      "^fg()" <<
     "^ca()" <<
     " " <<
     "^ca(1,cmus-remote -n)" <<
-      #"^fg(#{color(:symbol)})" <<
+      "^fg(#{color(:symbol)})" <<
+      "^fn(noto emoji:size=13)" <<
       "\u{23E9}" << # use \u23ed when emoji font supports it
-    "^ca()" <<
-    "^fn(#{config[:font]})"
+      "^fn(#{config[:font]})" <<
+      "^fg()" <<
+    "^ca()"
   end
 
   # prices of watched cryptocurrencies
@@ -544,8 +551,7 @@ class Controller
     end
 
     if @keepalive
-      system("xdotool mousemove_relative 1 1; " <<
-        "xdotool mousemove_relative -- -1 -1")
+      system("xdotool mousemove_relative 1 1 mousemove_relative -- -1 -1")
     end
 
     # brightness emoji

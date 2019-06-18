@@ -589,9 +589,12 @@ class Controller
   # wireless interface state and signal quality, ethernet interface status
   def network
     wifi_up = false
-    wifi_connected = false
     wifi_signal = 0
-    eth_connected = false
+
+    if @i3status_data[:ethernet] &&
+    @i3status_data[:ethernet]["full_text"].to_s.match(/up/)
+      return "^fg()eth"
+    end
 
     if @i3status_data[:wireless] &&
     (m = @i3status_data[:wireless]["full_text"].to_s.match(/^up\|(.+)$/))
@@ -607,56 +610,29 @@ class Controller
           wifi_signal = [ 2 * (n[1].to_i + 100), 100 ].min
         end
       end
-    end
-
-    if @i3status_data[:ethernet] &&
-    @i3status_data[:ethernet]["full_text"].to_s.match(/up/)
-      eth_connected = true
+    else
+      return nil
     end
 
     wi = ""
-    eth = ""
-
-    if wifi_up
-      wi = "^ca(1,sh -c 'sudo ifconfig " <<
-        "#{@i3status_data[:wireless]["instance"]} scan >/dev/null')"
-
-      if wifi_connected && wifi_signal > 0
-        if wifi_signal >= 60
-          wi << "^fg()"
-        elsif wifi_signal >= 45
-          wi << "^fg(#{color(:alert)})"
-        else
-          wi << "^fg(#{color(:warn)})"
-        end
-
-        wi << "wifi^fg()"
-      elsif wifi_connected
-        wi << "^fg()wifi"
-      elsif wifi_up
-        wi << "^fg(#{color(:disabled)})wifi^fg()"
-      end
-
-      wi << "^ca()"
-    end
-
-    if eth_connected
-      eth = "^fg()eth"
-    end
-
-    out = nil
-    if wi != ""
-      out = wi
-    end
-    if eth != ""
-      if out
-        out << "^fg(#{color(:disabled)}), " << eth
+    if wifi_connected && wifi_signal > 0
+      if wifi_signal >= 60
+        wi << "^fg()"
+      elsif wifi_signal >= 45
+        wi << "^fg(#{color(:alert)})"
       else
-        out = eth
+        wi << "^fg(#{color(:warn)})"
       end
+
+      wi << "wifi^fg()"
+    elsif wifi_connected
+      wi << "^fg()wifi"
+    elsif wifi_up
+      wi << "^fg(#{color(:disabled)})wifi^fg()"
     end
 
-    out
+    wi << "^ca()"
+    wi
   end
 
   # ac status, then each battery's percentage of power left

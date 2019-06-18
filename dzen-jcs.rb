@@ -113,6 +113,7 @@ class Controller
     },
     :cryptocurrencies => {
       :frequency => 60 * 5,
+      :error_frequency => 30,
     },
     :date => {
       :frequency => 1,
@@ -134,6 +135,7 @@ class Controller
     },
     :weather => {
       :frequency => 60 * 10,
+      :error_frequency => 30,
     },
   }
 
@@ -286,20 +288,21 @@ class Controller
         while true
           break if @dying
 
+          error = false
+
           begin
             ret = self.send(mod)
-
-          rescue Timeout::Error
-            ret = "^fg(#{color(:alert)})timeout error^fg()"
-          rescue StandardError => e
-            ret = "^fg(#{color(:alert)})error: #{e.class}^fg()"
-            STDERR.puts e
+          rescue Timeout::Error, StandardError => e
+            STDERR.puts "error updating #{mod}: #{e}"
             STDERR.puts e.backtrace.join("\n")
+            error = true
           end
 
-          update_data(mod, ret)
+          update_data(mod, ret, error)
 
-          if MODULES[mod][:frequency]
+          if error && MODULES[mod][:error_frequency]
+            sleep MODULES[mod][:error_frequency]
+          elsif MODULES[mod][:frequency]
             sleep MODULES[mod][:frequency]
           else
             Thread.stop
@@ -331,16 +334,31 @@ class Controller
     exit
   end
 
-  def update_data(mod, ret)
+  def update_data(mod, ret, error = false)
     @mutex.synchronize do
-      if @data[mod] == ret
+      if @data[mod] == ret && !error
         return
+      end
+
+      old_data = @data[mod]
+
+      if error
+        # try to show the last data for this module, it's better than nothing
+        if old_data.to_s == ""
+          @data[mod] = mod.to_s
+        end
+
+        @data[mod] << " ^fg(#{color(:alert)})!^fg()"
       end
 
       @data[mod] = ret
 
       @dzen_output = config[:module_order].map{|m| @data[m] }.
         reject{|d| !d }.join(sep)
+
+      if error
+        @data[mod] = old_data
+      end
     end
 
     @threads[:dzen].wakeup

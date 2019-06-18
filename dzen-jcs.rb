@@ -580,7 +580,7 @@ class Controller
     end
 
     # brightness emoji
-    "^ca(1,pkill -USR1 -f #{File.basename($0)})" <<
+    "^ca(1,kill -USR1 #{$$})" <<
       "^fn(noto emoji:size=13)^fg(#{@keepalive ? "" : color(:disabled)})" <<
       "\u{1F506}^fg()^fn(#{config[:font]})" <<
       "^ca()"

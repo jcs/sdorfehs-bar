@@ -183,6 +183,13 @@ class Controller
       @threads[:keepalive].wakeup
     end
 
+    # signal to force update of all threads
+    Kernel.trap("HUP") do
+      @threads.each do |n,t|
+        t.wakeup
+      end
+    end
+
     Thread.abort_on_exception = true
 
     # bring up a writer to dzen

@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 #
-# Copyright (c) 2009-2018 joshua stein <jcs@jcs.org>
+# Copyright (c) 2009-2019 joshua stein <jcs@jcs.org>
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -30,32 +30,11 @@ require "net/https"
 require "uri"
 require "json"
 
-def screenwidth
-  `xrandr | grep '^Screen 0:'`.match(/.*current (\d+) x \d+/)[1].to_i
-end
-
 config = {
   # seconds to blink on and off during 1 second
   :blink => [ 0.85, 0.15 ],
 
-  # dzen bar height
-  :height => `ratpoison -c 'set padding'`.split(" ")[1].to_i - 1,
-
-  # dzen bar width, half of the screen
-  :width => screenwidth / 2,
-
-  # right-side padding
-  :rightpadding => `ratpoison -c 'set barpadding'`.split(" ")[0].to_i,
-
-  # top padding
-  :toppadding => 1,
-
-  # font for dzen to use
-  :font => `ratpoison -c 'set font'`.strip,
-
   :colors => {
-    :bg => `ratpoison -c 'set bgcolor'`.strip,
-    :fg => `ratpoison -c 'set fgcolor'`.strip,
     :symbol => "#bbbbbb",
     :disabled => "#90a1ad",
     :ok => "#87de99",
@@ -80,12 +59,12 @@ config = {
   :cryptocurrencies => {},
 
   # which modules are enabled, and in which order
-  :module_order => [ :weather, :thermals, :cryptocurrencies, #:cmus_controls,
+  :module_order => [ :weather, :thermals, :cryptocurrencies,
     :keepalive, :audio, :network, :power, :date, :time ],
 }
 
-# override defaults by eval'ing ~/.dzen-jcs.rb
-if File.exists?(f = "#{ENV['HOME']}/.dzen-jcs.rb")
+# override defaults by eval'ing ~/.config/sdorfehs/bar-config.rb
+if File.exists?(f = "#{ENV["HOME"]}/.config/sdorfehs/bar-config.rb")
   eval(File.read(f))
 end
 
@@ -108,8 +87,6 @@ class Controller
   MODULES = {
     :audio => {
       :i3status => :volume,
-    },
-    :cmus_controls => {
     },
     :cryptocurrencies => {
       :frequency => 60 * 5,
@@ -144,8 +121,8 @@ class Controller
     @data = {}
     @threads = {}
 
-    @dzen = nil
-    @dzen_output = ""
+    @sdorfehs = nil
+    @output = ""
     @i3status = nil
     @i3status_data = {}
 
@@ -160,7 +137,7 @@ class Controller
   end
 
   def clense(str)
-    # escape dzen control chars
+    # escape control chars
     str.to_s.gsub(/\^/, "\\^").gsub("\n", " ").gsub("\r", "")
   end
 
@@ -170,7 +147,7 @@ class Controller
       exit 1
     end
 
-    # try to take dzen2 and i3status down with us
+    # try to take i3status down with us
     [ "QUIT", "TERM", "INT" ].each do |sig|
       Kernel.trap(sig) do
         @dying = true
@@ -192,39 +169,31 @@ class Controller
 
     Thread.abort_on_exception = true
 
-    # bring up a writer to dzen
-    @dzen = IO.popen([
-      "dzen2",
-      "-dock",
-      "-x", (screenwidth - config[:width] - config[:rightpadding]).to_s,
-      "-w", config[:width].to_s,
-      "-y", config[:toppadding].to_s,
-      "-bg", color(:bg),
-      "-fg", color(:fg),
-      "-ta", "r",
-      "-h", config[:height].to_s,
-      "-fn", config[:font],
-      "-p"
-    ], "w+")
+    # bring up a writer to sdorfehs
+    @sdorfehs = File.open("#{ENV["HOME"]}/.config/sdorfehs/bar", "w+")
 
-    # send data to dzen and handle blinking
-    @threads[:dzen] = Thread.new do
-      while @dzen
+    # send data to sdorfehs and handle blinking
+    @threads[:sdorfehs] = Thread.new do
+      while @sdorfehs
         break if @dying
 
-        output = @dzen_output.dup
+        output = @output.dup
 
         if output.match(/\^blink\(/)
           output, dark = unblink(output)
 
           # flash output, darken it for a brief moment, then show it again
-          @dzen.puts output
+          @sdorfehs.puts output
+          @sdorfehs.flush
           sleep config[:blink].first
-          @dzen.puts dark
+          @sdorfehs.puts dark
+          @sdorfehs.flush
           sleep config[:blink].last
-          @dzen.puts output
+          @sdorfehs.puts output
+          @sdorfehs.flush
         else
-          @dzen.puts output
+          @sdorfehs.puts output
+          @sdorfehs.flush
         end
 
         Thread.stop
@@ -281,7 +250,7 @@ class Controller
     end
 
     # if either child dies, take us down
-    [ :dzen, :i3status ].each do |child|
+    [ :i3status ].each do |child|
       @threads[:"#{child}_watcher"] = Thread.new do
         Process.waitpid(self.instance_variable_get("@#{child}").pid)
         STDERR.puts "#{child} exited #{$?.exitstatus}"
@@ -326,10 +295,10 @@ class Controller
     cleanup_and_exit
   end
 
-  # kill dzen2/i3status when we die
+  # kill i3status when we die
   def cleanup_and_exit
-    if @dzen
-      Process.kill(9, @dzen.pid)
+    if @sdorfehs
+      File.close(@sdorfehs)
     end
 
     if @i3status
@@ -347,7 +316,7 @@ class Controller
         return
       end
 
-      old_data = @data[mod]
+      old_data = @data[mod].dup
 
       if error
         # try to show the last data for this module, it's better than nothing
@@ -360,15 +329,15 @@ class Controller
 
       @data[mod] = ret
 
-      @dzen_output = config[:module_order].map{|m| @data[m] }.
-        reject{|d| !d }.join(sep)
+      @output = config[:module_order].map{|m| @data[m] }.reject{|d| !d }.
+        join(sep)
 
       if error
         @data[mod] = old_data
       end
     end
 
-    @threads[:dzen].wakeup
+    @threads[:sdorfehs].wakeup
   end
 
   # find ^blink() strings and return a stripped out version and a dark version
@@ -473,33 +442,6 @@ class Controller
     b.close
 
     present ? "^fg(#{color(up ? :ok : :disabled)})bt^fg()" : nil
-  end
-
-  # icons to control cmus
-  def cmus_controls
-    "^ca(1,cmus-remote -r)" <<
-      "^fg(#{color(:symbol)})" <<
-      "^fn(noto emoji:size=13)" <<
-      "\u{23EA}" << # use \u23ee when emoji font supports it
-      "^fn(#{config[:font]})" <<
-      "^fg()" <<
-    "^ca()" <<
-    " " <<
-    "^ca(1,cmus-remote -u)" <<
-      "^fg(#{color(:symbol)})" <<
-      "^fn(noto emoji:size=13)" <<
-      "\u{25B6}" << # use \u23ef when emoji font supports it
-      "^fn(#{config[:font]})" <<
-      "^fg()" <<
-    "^ca()" <<
-    " " <<
-    "^ca(1,cmus-remote -n)" <<
-      "^fg(#{color(:symbol)})" <<
-      "^fn(noto emoji:size=13)" <<
-      "\u{23E9}" << # use \u23ed when emoji font supports it
-      "^fn(#{config[:font]})" <<
-      "^fg()" <<
-    "^ca()"
   end
 
   # prices of watched cryptocurrencies

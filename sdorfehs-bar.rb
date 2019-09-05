@@ -121,7 +121,7 @@ class Controller
     @data = {}
     @threads = {}
 
-    @sdorfehs = nil
+    @bar = nil
     @output = ""
     @i3status = nil
     @i3status_data = {}
@@ -169,12 +169,12 @@ class Controller
 
     Thread.abort_on_exception = true
 
-    # bring up a writer to sdorfehs
-    @sdorfehs = File.open("#{ENV["HOME"]}/.config/sdorfehs/bar", "w+")
+    # bring up a writer to sdorfehs bar
+    @bar = File.open("#{ENV["HOME"]}/.config/sdorfehs/bar", "w+")
 
     # send data to sdorfehs and handle blinking
     @threads[:sdorfehs] = Thread.new do
-      while @sdorfehs
+      while @bar
         break if @dying
 
         output = @output.dup
@@ -183,17 +183,17 @@ class Controller
           output, dark = unblink(output)
 
           # flash output, darken it for a brief moment, then show it again
-          @sdorfehs.puts output
-          @sdorfehs.flush
+          @bar.puts output
+          @bar.flush
           sleep config[:blink].first
-          @sdorfehs.puts dark
-          @sdorfehs.flush
+          @bar.puts dark
+          @bar.flush
           sleep config[:blink].last
-          @sdorfehs.puts output
-          @sdorfehs.flush
+          @bar.puts output
+          @bar.flush
         else
-          @sdorfehs.puts output
-          @sdorfehs.flush
+          @bar.puts output
+          @bar.flush
         end
 
         Thread.stop
@@ -202,8 +202,14 @@ class Controller
       cleanup_and_exit
     end
 
-    # same for i3status
     @i3status = IO.popen("/usr/local/bin/i3status", "r+")
+
+    # find sdorfehs pid, so we can see when it exits
+    @sdorfehs = `pgrep sdorfehs`.strip.to_i
+    if @sdorfehs == 0
+      puts "can't find sdorfehs pid"
+      exit 1
+    end
 
     # cache new data, then wakeup any threads that are sleeping waiting for
     # that data
@@ -249,13 +255,10 @@ class Controller
       cleanup_and_exit
     end
 
-    # if either child dies, take us down
-    [ :i3status ].each do |child|
-      @threads[:"#{child}_watcher"] = Thread.new do
-        Process.waitpid(self.instance_variable_get("@#{child}").pid)
-        STDERR.puts "#{child} exited #{$?.exitstatus}"
-        cleanup_and_exit
-      end
+    @threads[:"i3status_watcher"] = Thread.new do
+      Process.waitpid(@i3status.pid)
+      STDERR.puts "i3status exited #{$?.exitstatus}"
+      cleanup_and_exit
     end
 
     # spin up threads for each module
@@ -263,6 +266,14 @@ class Controller
       @threads[mod] = Thread.new do
         while true
           break if @dying
+
+          # make sure sdorfehs is still up
+          begin
+            Process.kill(0, @sdorfehs)
+          rescue Errno::ESRCH
+            cleanup_and_exit
+            break
+          end
 
           error = false
 
@@ -297,8 +308,8 @@ class Controller
 
   # kill i3status when we die
   def cleanup_and_exit
-    if @sdorfehs
-      File.close(@sdorfehs)
+    if @bar
+      File.close(@bar)
     end
 
     if @i3status
@@ -679,6 +690,13 @@ class Controller
     js = JSON.parse(Net::HTTP.get(URI.parse(
       "https://api.darksky.net/forecast/" + config[:weather_api_key] +
       "/" + config[:weather_lat_long])))
+    if js["error"]
+      STDERR.puts "error updating weather: #{js.inspect}"
+      # don't return an error as we'll end up retrying on :error_frequency,
+      # which could be often.  if this error is due to exceeding a limit, it'll
+      # just make the problem worse
+      return "^fg(#{color(:error)})error^fg()"
+    end
 
     w = js["currently"]["summary"].downcase
 

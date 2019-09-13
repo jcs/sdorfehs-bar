@@ -29,6 +29,7 @@ require "date"
 require "net/https"
 require "uri"
 require "json"
+require "ffi"
 
 config = {
   # seconds to blink on and off during 1 second
@@ -80,6 +81,41 @@ class String
   end
 end
 
+# FFI interface to XResetScreenSaver
+module X11
+  extend FFI::Library
+
+  ffi_lib "libX11"
+
+  attach_function :XOpenDisplay, [ :string ], :pointer
+end
+module Xss
+  extend FFI::Library
+
+  typedef :ulong, :XID
+
+  class XSyncValue < FFI::Struct
+    layout :hi, :int32,
+      :lo, :uint32
+  end
+
+  class XSyncSystemCounter < FFI::Struct
+    layout :name, :string,
+      :counter, :XID,
+      :resolution, XSyncValue
+  end
+
+  ffi_lib "libXss"
+
+  attach_function :XSyncQueryExtension, [ :pointer, :pointer, :pointer ], :int
+  attach_function :XSyncInitialize, [ :pointer, :pointer, :pointer ], :int
+  attach_function :XSyncListSystemCounters, [ :pointer, :pointer ], :pointer
+  attach_function :XSyncFreeSystemCounterList, [ :pointer ], :void
+  attach_function :XSyncQueryCounter, [ :pointer, :XID, :pointer ], :int
+
+  attach_function :XResetScreenSaver, [ :pointer ], :int
+end
+
 class Controller
   attr_reader :config
   attr_writer :dying
@@ -96,7 +132,7 @@ class Controller
       :frequency => 1,
     },
     :keepalive => {
-      :frequency => 60,
+      :frequency => 30,
     },
     :network => {
       :i3status => [ :ethernet, :wireless ],
@@ -156,8 +192,10 @@ class Controller
 
     # signal to toggle keep alive
     Kernel.trap("USR1") do
-      MODULES[:keepalive][:toggle] = true
-      @threads[:keepalive].wakeup
+      if @threads[:keepalive]
+        MODULES[:keepalive][:toggle] = true
+        @threads[:keepalive].wakeup
+      end
     end
 
     # signal to force update of all threads
@@ -172,10 +210,25 @@ class Controller
     # bring up a writer to sdorfehs bar
     @bar = File.open("#{ENV["HOME"]}/.config/sdorfehs/bar", "w+")
 
+    # find sdorfehs pid, so we can see when it exits
+    @sdorfehs = `pgrep sdorfehs`.strip.to_i
+    if @sdorfehs == 0
+      puts "can't find sdorfehs pid"
+      exit 1
+    end
+
     # send data to sdorfehs and handle blinking
     @threads[:sdorfehs] = Thread.new do
       while @bar
         break if @dying
+
+        # make sure sdorfehs is still up
+        begin
+          Process.kill(0, @sdorfehs)
+        rescue Errno::ESRCH
+          cleanup_and_exit
+          break
+        end
 
         output = @output.dup
 
@@ -203,13 +256,6 @@ class Controller
     end
 
     @i3status = IO.popen("/usr/local/bin/i3status", "r+")
-
-    # find sdorfehs pid, so we can see when it exits
-    @sdorfehs = `pgrep sdorfehs`.strip.to_i
-    if @sdorfehs == 0
-      puts "can't find sdorfehs pid"
-      exit 1
-    end
 
     # cache new data, then wakeup any threads that are sleeping waiting for
     # that data
@@ -261,20 +307,54 @@ class Controller
       cleanup_and_exit
     end
 
+    if config[:module_order].include?(:keepalive)
+      @threads[:keepalive_pinger] = Thread.new do
+        sync_event = FFI::MemoryPointer.new(:int32, 1)
+        error = FFI::MemoryPointer.new(:int32, 1)
+        ncounters = FFI::MemoryPointer.new(:int32, 1)
+
+        dpy = X11.XOpenDisplay(nil)
+
+        Xss.XSyncQueryExtension(dpy, sync_event, error).inspect
+        Xss.XSyncInitialize(dpy, sync_event, error)
+
+        counters = Xss.XSyncListSystemCounters(dpy, ncounters)
+
+        idler_counter = 0
+        (0 ... ncounters.read_int).each do |x|
+          c = Xss::XSyncSystemCounter.new(counters +
+            (x * Xss::XSyncSystemCounter.size))
+          if c[:name] == "IDLETIME"
+            idler_counter = c[:counter]
+          end
+        end
+
+        Xss.XSyncFreeSystemCounterList(counters)
+
+        if idler_counter == 0
+          STDERR.puts "keepalive: couldn't find IDLETIME counter"
+          exit 1
+        end
+
+        value = Xss::XSyncValue.new
+
+        while !@dying do
+          Thread.stop
+
+          if MODULES[:keepalive][:enabled]
+            # not sure why the counter has to be read before XResetScreenSaver
+            # but it does, otherwise XResetScreenSaver does nothing
+            Xss.XSyncQueryCounter(dpy, idler_counter, value)
+            Xss.XResetScreenSaver(dpy)
+          end
+        end
+      end
+    end
+
     # spin up threads for each module
     config[:module_order].each do |mod|
       @threads[mod] = Thread.new do
-        while true
-          break if @dying
-
-          # make sure sdorfehs is still up
-          begin
-            Process.kill(0, @sdorfehs)
-          rescue Errno::ESRCH
-            cleanup_and_exit
-            break
-          end
-
+        while !@dying
           error = false
 
           begin
@@ -521,20 +601,19 @@ class Controller
   end
 
   def keepalive
-    @keepalive ||= false
-
     if MODULES[:keepalive][:toggle]
-      @keepalive = !@keepalive
-      MODULES[:keepalive][:toggle] = false
+      MODULES[:keepalive][:enabled] = !(!!MODULES[:keepalive][:enabled])
+      MODULES[:keepalive].delete(:toggle)
     end
 
-    if @keepalive
-      system("xdotool mousemove_relative 1 1 mousemove_relative -- -1 -1")
+    if MODULES[:keepalive][:enabled]
+      @threads[:keepalive_pinger].wakeup
     end
 
     # brightness emoji
     "^ca(1,kill -USR1 #{$$})" <<
-      "^fn(noto emoji:size=13)^fg(#{@keepalive ? "" : color(:disabled)})" <<
+      "^fn(noto emoji:size=13)^fg(" <<
+      "#{MODULES[:keepalive][:enabled] ? "" : color(:disabled)})" <<
       "\u{1F506}^fg()^fn(#{config[:font]})" <<
       "^ca()"
   end

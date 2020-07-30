@@ -60,8 +60,8 @@ config = {
   :cryptocurrencies => {},
 
   # which modules are enabled, and in which order
-  :module_order => [ :weather, :thermals, :cryptocurrencies,
-    :keepalive, :audio, :network, :power, :date, :time ],
+  :module_order => [ :weather, :cryptocurrencies, :keepalive, :audio, :network,
+    :thermals, :power, :date, :time ],
 }
 
 # override defaults by eval'ing ~/.config/sdorfehs/bar-config.rb
@@ -722,7 +722,7 @@ class Controller
         out << "^fg(#{color(:alert)})"
       end
 
-      out << "#{sprintf("%0.1f", run_rate)}w^fg()"
+      out << "#{sprintf("%0.1f", run_rate)}^fg(#{color(:disabled)})w^fg()"
     end
 
     out
@@ -767,9 +767,11 @@ class Controller
     return nil if !config[:weather_lat_long].any?
 
     js = JSON.parse(Net::HTTP.get(URI.parse(
-      "https://api.darksky.net/forecast/" + config[:weather_api_key] +
-      "/" + config[:weather_lat_long])))
-    if js["error"]
+      "https://api.openweathermap.org/data/2.5/weather?lat=" +
+      config[:weather_lat_long].split(",")[0] + "&lon=" +
+      config[:weather_lat_long].split(",")[1] + "&units=imperial&appid=" +
+      config[:weather_api_key])))
+    if js["cod"].to_i != 200
       STDERR.puts "error updating weather: #{js.inspect}"
       # don't return an error as we'll end up retrying on :error_frequency,
       # which could be often.  if this error is due to exceeding a limit, it'll
@@ -777,14 +779,14 @@ class Controller
       return "^fg(#{color(:error)})error^fg()"
     end
 
-    w = js["currently"]["summary"].downcase
+    w = js["weather"][0]["description"].downcase
 
     # add current temperature
-    w << " ^fg()" << js["currently"]["apparentTemperature"].to_i.to_s <<
+    w << " ^fg()" << js["main"]["temp"].to_i.to_s <<
       "^fg(#{color(:disabled)})f^fg()"
 
     # add current humidity
-    humidity = js["currently"]["humidity"].to_f * 100.0
+    humidity = js["main"]["humidity"].to_i
     w << "^fg(#{color(:disabled)})/^fg(" <<
       (humidity > 60 ? color(:alert) : "") <<
       ")" << humidity.to_i.to_s << "^fg(#{color(:disabled)})%^fg()"

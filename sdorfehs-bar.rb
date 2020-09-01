@@ -190,10 +190,17 @@ class Controller
       end
     end
 
-    # signal to toggle keep alive
+    # signal to enable keep alive
     Kernel.trap("USR1") do
       if @threads[:keepalive]
-        MODULES[:keepalive][:toggle] = true
+        MODULES[:keepalive][:enabled] = true
+        @threads[:keepalive].wakeup
+      end
+    end
+    # and to disable it
+    Kernel.trap("USR2") do
+      if @threads[:keepalive]
+        MODULES[:keepalive][:enabled] = false
         @threads[:keepalive].wakeup
       end
     end
@@ -611,7 +618,7 @@ class Controller
     end
 
     # brightness emoji
-    "^ca(1,kill -USR1 #{$$})" <<
+    "^ca(1,kill -USR#{MODULES[:keepalive][:enabled] ? "2" : "1"} #{$$})" <<
       "^fn(noto emoji:size=13)^fg(" <<
       "#{MODULES[:keepalive][:enabled] ? "" : color(:disabled)})" <<
       "\u{1F506}^fg()^fn(#{config[:font]})" <<

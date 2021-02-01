@@ -242,7 +242,7 @@ class Controller
         begin
           Process.kill(0, @sdorfehs)
         rescue Errno::ESRCH
-          cleanup_and_exit
+          cleanup_and_exit("sdorfehs is not running")
           break
         end
 
@@ -268,7 +268,7 @@ class Controller
         Thread.stop
       end
 
-      cleanup_and_exit
+      cleanup_and_exit("sdorfehs bar interface went away")
     end
 
     @i3status = IO.popen("/usr/local/bin/i3status", "r+")
@@ -314,13 +314,12 @@ class Controller
         end
       end
 
-      cleanup_and_exit
+      cleanup_and_exit("i3status died")
     end
 
     @threads[:"i3status_watcher"] = Thread.new do
       Process.waitpid(@i3status.pid)
-      STDERR.puts "i3status exited #{$?.exitstatus}"
-      cleanup_and_exit
+      cleanup_and_exit("i3status exited #{$?.exitstatus}")
     end
 
     if config[:module_order].include?(:keepalive)
@@ -399,12 +398,17 @@ class Controller
       v.join
     end
 
-    cleanup_and_exit
+    cleanup_and_exit("theads died")
   end
 
   # kill i3status when we die
-  def cleanup_and_exit
+  def cleanup_and_exit(why)
     if @bar
+      begin
+        @bar.puts "sdorfehs-bar exiting: #{why}"
+        @bar.flush
+      rescue
+      end
       File.close(@bar)
     end
 

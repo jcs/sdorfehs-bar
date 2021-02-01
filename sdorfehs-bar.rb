@@ -833,7 +833,10 @@ class Controller
       return "^fg(#{color(:error)})error^fg()"
     end
 
-    w = js["weather"][0]["description"].downcase
+    w = js["weather"][0]["description"].downcase.
+      gsub(/^scattered /, "").
+      gsub(/^overcast clouds/, "overcast").
+      gsub(/^broken clouds/, "cloudy")
 
     # add current temperature
     w << " ^fg()" << js["main"]["temp"].to_i.to_s <<

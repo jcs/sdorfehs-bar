@@ -56,12 +56,17 @@ config = {
 
   # cryptocurrencies to watch, as a hash of each symbol to a hash containing
   # the :qty and :cost of amounts held
-  # https://www.cryptocompare.com/api/#-api-data-price-
   :cryptocurrencies => {},
 
+  # stocks to watch, as a hash of each symbol to a hash containing the :qty and
+  # :cost of amounts held
+  # requires an API key from https://finnhub.io/register stored as
+  # config[:stocks_api_key]
+  :stocks => {},
+
   # which modules are enabled, and in which order
-  :module_order => [ :weather, :cryptocurrencies, :keepalive, :audio, :network,
-    :thermals, :power, :date, :time ],
+  :module_order => [ :weather, :cryptocurrencies, :stocks, :keepalive, :audio,
+    :network, :thermals, :power, :date, :time ],
 }
 
 # override defaults by eval'ing ~/.config/sdorfehs/bar-config.rb
@@ -139,6 +144,10 @@ class Controller
     },
     :power => {
       :i3status => :battery,
+    },
+    :stocks => {
+      :frequency => 60 * 5,
+      :error_frequency => 30,
     },
     :thermals => {
       :i3status => :cpu_temperature,
@@ -560,44 +569,16 @@ class Controller
         next
       end
 
-      curlabel = case cur.downcase
+      label = case cur.downcase
       when "btc"
-        "^fn(courier new:size=13)^fg(#{color(:symbol)})" <<
-          "\u{0243}^fg()^fn(#{config[:font]})"
+        "^fn(courier new:size=13)\u{0243}^fn()"
       when "eth"
-        "^fn(courier new:size=13)^fg(#{color(:symbol)})" <<
-          "\u{039E}^fg()^fn(#{config[:font]})"
+        "^fn(courier new:size=13)\u{039E}^fn()"
       else
-        cur.downcase
+        "#{cur.downcase}"
       end
 
-      t = "#{curlabel} $#{usd["USD"].floor}"
-
-      if c[:qty]
-        quote = usd["USD"] * c[:qty].to_f
-
-        if c[:cost]
-          change = quote - c[:cost]
-
-          color = ""
-          if change == 0.0
-            color = ""
-            change = "=$#{change.floor}"
-          elsif change > 0.0
-            color = color(:ok)
-            change = "+$#{change.floor}"
-          elsif change < 0.0
-            color = color(:emerg)
-            change = "-$#{change.abs.ceil}"
-          end
-
-          t << " ^fg(#{color})#{change}^fg()"
-        else
-          t << " =$#{quote.floor}"
-        end
-      end
-
-      out.push t
+      out.push price(label, usd["USD"], nil, c[:qty], c[:cost])
     end
 
     out.join(" ")
@@ -733,6 +714,68 @@ class Controller
     end
 
     out
+  end
+
+  def price(symbol, quote, quote_color, qty, cost)
+    t = "#{symbol}^fg(#{color(:disabled)})/^fg(#{quote_color})"
+
+    if quote > 10
+      t << "$#{quote.floor}"
+    else
+      t << "$#{sprintf("%0.2f", quote)}"
+    end
+
+    if qty
+      quote = quote * qty.to_f
+
+      if cost
+        change = quote - cost
+
+        change_color = ""
+        if change == 0.0
+          change_color = ""
+          change = "=$#{change.floor}"
+        elsif change > 0.0
+          change_color = color(:ok)
+          change = "+$#{change.floor}"
+        elsif change < 0.0
+          change_color = color(:emerg)
+          change = "-$#{change.abs.ceil}"
+        end
+
+        t << " ^fg(#{change_color})#{change}^fg()"
+      else
+        t << " =$#{quote.floor}"
+      end
+    end
+
+    t
+  end
+
+  def stocks
+    return nil if !config[:stocks].any?
+    return nil if !config[:stocks_api_key].any?
+
+    out = []
+
+    config[:stocks].each do |ticker,c|
+      sd = Net::HTTP.get(URI.parse("https://finnhub.io/api/v1/quote?symbol=" +
+        "#{ticker}&token=#{config[:stocks_api_key]}"))
+
+      js = JSON.parse(sd)
+      # => {"c"=>261.74, "h"=>263.31, "l"=>260.68, "o"=>261.07, "pc"=>259.45}
+
+      quote_color = ""
+      if js["c"] > js["o"]
+        quote_color = color(:ok)
+      elsif js["c"] < js["o"]
+        quote_color = color(:emerg)
+      end
+
+      out.push price(ticker, js["c"], quote_color, c[:qty], c[:cost])
+    end
+
+    out.join(" ")
   end
 
   # any temperature sensors that are too hot

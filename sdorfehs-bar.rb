@@ -44,6 +44,9 @@ config = {
     :emerg => "#ff7f7f",
   },
 
+  # the size between module output, in points of the font
+  :sep_size => 25,
+
   # minimum temperature (f) at which sensors will be shown
   :temp_min => 160,
 
@@ -502,7 +505,7 @@ class Controller
 
   # separator bar
   def sep
-    "^fn(courier new:size=10)   ^fn(#{config[:font]})"
+    "^fn(courier new:size=#{config[:sep_size]}) ^fn(#{config[:font]})"
   end
 
   # data-collection routines
@@ -836,7 +839,8 @@ class Controller
     w = js["weather"][0]["description"].downcase.
       gsub(/^scattered /, "").
       gsub(/^overcast clouds/, "overcast").
-      gsub(/^broken clouds/, "cloudy")
+      gsub(/^broken clouds/, "cloudy").
+      gsub(/^overcast clouds/, "overcast")
 
     # add current temperature
     w << " ^fg()" << js["main"]["temp"].to_i.to_s <<

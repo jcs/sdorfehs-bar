@@ -535,6 +535,9 @@ class Controller
       o << "^fg(#{color(:disabled)})"
     end
 
+    # clicking anywhere on "vol/XX%" will toggle mute
+    o << "^ca(1,sh -c 'sndioctl output.mute=!; pkill -USR1 i3status')"
+
     o << "vol^fg(#{color(:disabled)})/"
 
     if @i3status_data[:volume]["full_text"].match(/mute/)
@@ -551,6 +554,7 @@ class Controller
       o << "#{vol}^fg(#{color(:disabled)})%"
     end
 
+    o << "^ca()"
     o << "^fg()"
   end
 

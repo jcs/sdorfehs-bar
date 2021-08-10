@@ -689,6 +689,12 @@ class Controller
     end
 
     wi = ""
+
+    # clicking on wifi will bounce interface
+    iface = @i3status_data[:wireless]["instance"]
+    wi << "^ca(1,sh -c 'doas ifconfig #{iface} down; " <<
+      "doas ifconfig #{iface} up')"
+
     if wifi_connected && wifi_signal > 0
       if wifi_signal >= 60
         wi << "^fg()"
@@ -913,7 +919,8 @@ class Controller
       gsub(/^scattered /, "").
       gsub(/^overcast clouds/, "overcast").
       gsub(/^broken clouds/, "cloudy").
-      gsub(/^overcast clouds/, "overcast")
+      gsub(/^overcast clouds/, "overcast").
+      gsub(/intensity /, "")
 
     # add current temperature
     w << " ^fg()" << js["main"]["temp"].to_i.to_s <<

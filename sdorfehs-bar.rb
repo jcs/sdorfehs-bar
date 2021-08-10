@@ -176,6 +176,7 @@ class Controller
 
     @dying = false
     @refresh = true
+    @restart = false
 
     @mutex = Mutex.new
   end
@@ -219,9 +220,8 @@ class Controller
 
     # signal to force update of all threads
     Kernel.trap("HUP") do
-      @threads.each do |n,t|
-        t.wakeup
-      end
+      @restart = true
+      @dying = true
     end
 
     Thread.abort_on_exception = true
@@ -318,14 +318,18 @@ class Controller
             @threads[mod].wakeup
           end
         end
+
+        if @restart_i3status
+          if @i3status
+            Process.kill(9, @i3status.pid)
+            Process.waitpid(@i3status.pid)
+          end
+          @restart_i3status = false
+          @i3status = IO.popen("/usr/local/bin/i3status", "r+")
+        end
       end
 
       cleanup_and_exit("i3status died")
-    end
-
-    @threads[:"i3status_watcher"] = Thread.new do
-      Process.waitpid(@i3status.pid)
-      cleanup_and_exit("i3status exited #{$?.exitstatus}")
     end
 
     if config[:module_order].include?(:keepalive)
@@ -404,7 +408,11 @@ class Controller
       v.join
     end
 
-    cleanup_and_exit("theads died")
+    if @restart
+      cleanup_and_exit("restarting")
+    else
+      cleanup_and_exit("threads died")
+    end
   end
 
   # kill i3status when we die
@@ -425,6 +433,9 @@ class Controller
 
   rescue
   ensure
+    if @restart
+      exec("ruby", $0)
+    end
     exit
   end
 

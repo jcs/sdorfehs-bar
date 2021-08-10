@@ -230,7 +230,10 @@ class Controller
     @bar = File.open("#{ENV["HOME"]}/.config/sdorfehs/bar", "w+")
 
     # find sdorfehs pid, so we can see when it exits
-    @sdorfehs = `pgrep sdorfehs`.strip.to_i
+    @sdorfehs = ENV["SDORFEHS_PID"].to_i
+    if @sdorfehs == 0
+      @sdorfehs = `pgrep sdorfehs`.strip.to_i
+    end
     if @sdorfehs == 0
       puts "can't find sdorfehs pid"
       exit 1
@@ -245,7 +248,7 @@ class Controller
         begin
           Process.kill(0, @sdorfehs)
         rescue Errno::ESRCH
-          cleanup_and_exit("sdorfehs is not running")
+          cleanup_and_exit("sdorfehs (#{@sdorfehs}) is not running")
           break
         end
 
@@ -417,6 +420,7 @@ class Controller
 
     if @i3status
       Process.kill(9, @i3status.pid)
+      Process.waitpid
     end
 
   rescue

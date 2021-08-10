@@ -44,8 +44,27 @@ config = {
     :emerg => "#ff7f7f",
   },
 
+  # cryptocurrencies to watch, as a hash of each symbol to a hash containing
+  # the :qty and :cost of amounts held
+  :cryptocurrencies => {},
+
+  # where to put the FIFO for controlling ourself
+  :fifo_path => "#{ENV["HOME"]}/.config/sdorfehs/bar-control",
+
   # the size between module output, in points of the font
   :sep_size => 25,
+
+  # ranges for hw.setperf
+  :setperf => {
+    :noturbo => 0..93,
+    :turbo => 0..100,
+  },
+
+  # stocks to watch, as a hash of each symbol to a hash containing the :qty and
+  # :cost of amounts held
+  # requires an API key from https://finnhub.io/register stored as
+  # config[:stocks_api_key]
+  :stocks => {},
 
   # minimum temperature (f) at which sensors will be shown
   :temp_min => 160,
@@ -57,19 +76,9 @@ config = {
   # to get the lat/long based on ip address
   :weather_lat_long => "",
 
-  # cryptocurrencies to watch, as a hash of each symbol to a hash containing
-  # the :qty and :cost of amounts held
-  :cryptocurrencies => {},
-
-  # stocks to watch, as a hash of each symbol to a hash containing the :qty and
-  # :cost of amounts held
-  # requires an API key from https://finnhub.io/register stored as
-  # config[:stocks_api_key]
-  :stocks => {},
-
   # which modules are enabled, and in which order
-  :module_order => [ :weather, :cryptocurrencies, :stocks, :keepalive, :audio,
-    :network, :thermals, :power, :date, :time ],
+  :module_order => [ :weather, :cryptocurrencies, :stocks, :keepalive,
+    :setperf, :audio, :network, :thermals, :power, :date, :time ],
 }
 
 # override defaults by eval'ing ~/.config/sdorfehs/bar-config.rb
@@ -148,6 +157,9 @@ class Controller
     :power => {
       :i3status => :battery,
     },
+    :setperf => {
+      :frequency => 60,
+    },
     :stocks => {
       :frequency => 60 * 5,
       :error_frequency => 30,
@@ -179,6 +191,12 @@ class Controller
     @restart = false
 
     @mutex = Mutex.new
+
+    if File.exists?(@config[:fifo_path])
+      File.unlink(@config[:fifo_path])
+    end
+    File.mkfifo(@config[:fifo_path])
+    @fifo = File.open(@config[:fifo_path], "r+")
   end
 
   def color(col)
@@ -203,22 +221,7 @@ class Controller
       end
     end
 
-    # signal to enable keep alive
-    Kernel.trap("USR1") do
-      if @threads[:keepalive]
-        MODULES[:keepalive][:enabled] = true
-        @threads[:keepalive].wakeup
-      end
-    end
-    # and to disable it
-    Kernel.trap("USR2") do
-      if @threads[:keepalive]
-        MODULES[:keepalive][:enabled] = false
-        @threads[:keepalive].wakeup
-      end
-    end
-
-    # signal to force update of all threads
+    # signal to reload config and restart i3status
     Kernel.trap("HUP") do
       @restart = true
       @dying = true
@@ -237,6 +240,35 @@ class Controller
     if @sdorfehs == 0
       puts "can't find sdorfehs pid"
       exit 1
+    end
+
+    # read action commands
+    @threads[:fifo] = Thread.new do
+      while !@fifo.eof?
+        line = @fifo.gets
+
+        case line.strip
+        when "quit"
+          @dying = true
+        when "restart"
+          @restart = true
+          @dying = true
+        when "keepalive"
+          MODULES[:keepalive][:enabled] = true
+          @threads[:keepalive].wakeup
+        when "nokeepalive"
+          MODULES[:keepalive][:enabled] = false
+          @threads[:keepalive].wakeup
+        when "setperfturbo"
+          MODULES[:setperf][:do_turbo] = true
+          @threads[:setperf].wakeup
+        when "nosetperfturbo"
+          MODULES[:setperf][:do_turbo] = false
+          @threads[:setperf].wakeup
+        else
+          STDERR.puts "unknown fifo command: #{line.inspect}"
+        end
+      end
     end
 
     # send data to sdorfehs and handle blinking
@@ -601,7 +633,7 @@ class Controller
       when "eth"
         "^fn(courier new:size=13)\u{039E}^fn()"
       else
-        "#{cur.downcase}"
+        "#{c[:label] ? c[:label] : cur.downcase}"
       end
 
       out.push price(label, usd["USD"], nil, c[:qty], c[:cost])
@@ -615,17 +647,13 @@ class Controller
   end
 
   def keepalive
-    if MODULES[:keepalive][:toggle]
-      MODULES[:keepalive][:enabled] = !(!!MODULES[:keepalive][:enabled])
-      MODULES[:keepalive].delete(:toggle)
-    end
-
     if MODULES[:keepalive][:enabled]
       @threads[:keepalive_pinger].wakeup
     end
 
     # brightness emoji
-    "^ca(1,kill -USR#{MODULES[:keepalive][:enabled] ? "2" : "1"} #{$$})" <<
+    "^ca(1,sh -c 'echo #{MODULES[:keepalive][:enabled] ? "no" : ""}" <<
+      "keepalive > #{config[:fifo_path]}')" <<
       "^fn(noto emoji:size=13)^fg(" <<
       "#{MODULES[:keepalive][:enabled] ? "" : color(:disabled)})" <<
       "\u{1F506}^fg()^fn(#{config[:font]})" <<
@@ -776,6 +804,32 @@ class Controller
     end
 
     t
+  end
+
+  def setperf
+    if MODULES[:setperf].include?(:do_turbo)
+      if MODULES[:setperf][:do_turbo]
+        system("apm -A #{@config[:setperf][:turbo].min}-" <<
+          "#{@config[:setperf][:turbo].max}")
+      else
+        system("apm -A #{@config[:setperf][:noturbo].min}-" <<
+          "#{@config[:setperf][:noturbo].max}")
+      end
+
+      MODULES[:setperf].delete(:do_turbo)
+    end
+
+    MODULES[:setperf][:max] = `sysctl -n hw.setperfmax`.to_i
+    MODULES[:setperf][:turbo_ok] = (MODULES[:setperf][:max] ==
+      config[:setperf][:turbo].max)
+
+    # lightning emoji
+    "^ca(1,sh -c 'echo #{MODULES[:setperf][:turbo_ok] ? "no" : ""}" <<
+      "setperfturbo > #{config[:fifo_path]}')" <<
+      "^fn(noto emoji:size=13)^fg(" <<
+      "#{MODULES[:setperf][:turbo_ok] ? "" : color(:disabled)})" <<
+      "\u{26A1}^fg()^fn(#{config[:font]})" <<
+      "^ca()"
   end
 
   def stocks

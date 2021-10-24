@@ -37,10 +37,10 @@ config = {
 
   :colors => {
     :symbol => "#bbbbbb",
-    :disabled => "#90a1ad",
+    :disabled => "#9d9d9d",
     :ok => "#87de99",
     :warn => "orange",
-    :alert => "#d2de87",
+    :alert => "#db846b",
     :emerg => "#ff7f7f",
   },
 
@@ -654,7 +654,7 @@ class Controller
     # brightness emoji
     "^ca(1,sh -c 'echo #{MODULES[:keepalive][:enabled] ? "no" : ""}" <<
       "keepalive > #{config[:fifo_path]}')" <<
-      "^fn(noto emoji:size=13)^fg(" <<
+      "^fn(noto emoji)^fg(" <<
       "#{MODULES[:keepalive][:enabled] ? "" : color(:disabled)})" <<
       "\u{1F506}^fg()^fn(#{config[:font]})" <<
       "^ca()"
@@ -832,7 +832,7 @@ class Controller
     # lightning emoji
     "^ca(1,sh -c 'echo #{MODULES[:setperf][:turbo_ok] ? "no" : ""}" <<
       "setperfturbo > #{config[:fifo_path]}')" <<
-      "^fn(noto emoji:size=13)^fg(" <<
+      "^fn(noto emoji)^fg(" <<
       "#{MODULES[:setperf][:turbo_ok] ? "" : color(:disabled)})" <<
       "\u{26A1}^fg()^fn(#{config[:font]})" <<
       "^ca()"

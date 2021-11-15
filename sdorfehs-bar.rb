@@ -54,12 +54,6 @@ config = {
   # the size between module output, in points of the font
   :sep_size => 25,
 
-  # ranges for hw.setperf
-  :setperf => {
-    :noturbo => 0..93,
-    :turbo => 0..100,
-  },
-
   # stocks to watch, as a hash of each symbol to a hash containing the :qty and
   # :cost of amounts held
   # requires an API key from https://finnhub.io/register stored as
@@ -78,7 +72,7 @@ config = {
 
   # which modules are enabled, and in which order
   :module_order => [ :weather, :cryptocurrencies, :stocks, :keepalive,
-    :setperf, :audio, :network, :thermals, :power, :date, :time ],
+    :audio, :network, :thermals, :power, :date, :time ],
 }
 
 # override defaults by eval'ing ~/.config/sdorfehs/bar-config.rb
@@ -156,9 +150,6 @@ class Controller
     },
     :power => {
       :i3status => :battery,
-    },
-    :setperf => {
-      :frequency => 60,
     },
     :stocks => {
       :frequency => 60 * 5,
@@ -259,12 +250,6 @@ class Controller
         when "nokeepalive"
           MODULES[:keepalive][:enabled] = false
           @threads[:keepalive].wakeup
-        when "setperfturbo"
-          MODULES[:setperf][:do_turbo] = true
-          @threads[:setperf].wakeup
-        when "nosetperfturbo"
-          MODULES[:setperf][:do_turbo] = false
-          @threads[:setperf].wakeup
         else
           STDERR.puts "unknown fifo command: #{line.inspect}"
         end
@@ -812,32 +797,6 @@ class Controller
     end
 
     t
-  end
-
-  def setperf
-    if MODULES[:setperf].include?(:do_turbo)
-      if MODULES[:setperf][:do_turbo]
-        system("apm -A #{@config[:setperf][:turbo].min}-" <<
-          "#{@config[:setperf][:turbo].max}")
-      else
-        system("apm -A #{@config[:setperf][:noturbo].min}-" <<
-          "#{@config[:setperf][:noturbo].max}")
-      end
-
-      MODULES[:setperf].delete(:do_turbo)
-    end
-
-    MODULES[:setperf][:max] = `sysctl -n hw.setperfmax`.to_i
-    MODULES[:setperf][:turbo_ok] = (MODULES[:setperf][:max] ==
-      config[:setperf][:turbo].max)
-
-    # lightning emoji
-    "^ca(1,sh -c 'echo #{MODULES[:setperf][:turbo_ok] ? "no" : ""}" <<
-      "setperfturbo > #{config[:fifo_path]}')" <<
-      "^fn(noto emoji)^fg(" <<
-      "#{MODULES[:setperf][:turbo_ok] ? "" : color(:disabled)})" <<
-      "\u{26A1}^fg()^fn(#{config[:font]})" <<
-      "^ca()"
   end
 
   def stocks

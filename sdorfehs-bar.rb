@@ -40,8 +40,8 @@ config = {
     :disabled => "#9d9d9d",
     :ok => "#87de99",
     :warn => "orange",
-    :alert => "#db846b",
-    :emerg => "#ff7f7f",
+    :alert => "#cb4b16",
+    :emerg => "#b5401e",
   },
 
   # cryptocurrencies to watch, as a hash of each symbol to a hash containing
@@ -738,23 +738,25 @@ class Controller
 
     total_perc = batt_perc.values.inject{|a,b| a + b }
 
-    batt_perc.keys.each do |i|
-      out << "^fg(#{color(:disabled)})/"
+    if !ac_on || total_perc < 50
+      batt_perc.keys.each do |i|
+        out << "^fg(#{color(:disabled)})/"
 
-      blink = false
-      if batt_perc[i] <= 10.0
-        out << "^fg(#{color(:emerg)})"
-        if total_perc < 10.0 && !ac_on
-          blink = true
+        blink = false
+        if batt_perc[i] <= 10.0
+          out << "^fg(#{color(:emerg)})"
+          if total_perc < 10.0 && !ac_on
+            blink = true
+          end
+        elsif batt_perc[i] < 30.0
+          out << "^fg(#{color(:alert)})"
+        else
+          out << "^fg()"
         end
-      elsif batt_perc[i] < 30.0
-        out << "^fg(#{color(:alert)})"
-      else
-        out << "^fg()"
-      end
 
-      out << (blink ? "^blink(" : "") + batt_perc[i].to_s +
-        (blink ? ")" : "") + "^fg(#{color(:disabled)})%^fg()"
+        out << (blink ? "^blink(" : "") + batt_perc[i].to_s +
+          (blink ? ")" : "") + "^fg(#{color(:disabled)})%^fg()"
+      end
     end
 
     if !batt_perc.any?

@@ -71,7 +71,7 @@ config = {
   :weather_lat_long => "",
 
   # which modules are enabled, and in which order
-  :module_order => [ :weather, :cryptocurrencies, :stocks, :keepalive,
+  :module_order => [ :weather, :cryptocurrencies, :stocks, :vscreen, :keepalive,
     :audio, :network, :thermals, :power, :date, :time ],
 }
 
@@ -165,6 +165,9 @@ class Controller
       :frequency => 60 * 10,
       :error_frequency => 30,
     },
+    :vscreen => {
+      :frequency => 60,
+    },
   }
 
   def initialize(config)
@@ -250,6 +253,9 @@ class Controller
         when "nokeepalive"
           MODULES[:keepalive][:enabled] = false
           @threads[:keepalive].wakeup
+        when /^vscreen=(\d+)/
+          MODULES[:vscreen][:cur] = $1.to_i
+          update_data(:vscreen, vscreen, nil)
         else
           STDERR.puts "unknown fifo command: #{line.inspect}"
         end
@@ -560,13 +566,7 @@ class Controller
     if @i3status_data[:volume]["full_text"].match(/mute/)
       o << "---"
     else
-      vol = @i3status_data[:volume]["full_text"].gsub(/[^0-9]/, "").to_i
-
-      if vol >= 75
-        o << "^fg(#{color(:alert)})"
-      else
-        o << "^fg()"
-      end
+      vol = @i3status_data[:volume]["full_text"].gsub(/[^0-9]/, "")
 
       o << "#{vol}^fg(#{color(:disabled)})%"
     end
@@ -848,6 +848,16 @@ class Controller
     t = Time.now
     "^fg()" << t.strftime("%H") << "^fg(#{color(:disabled)}):^fg()" <<
       t.strftime("%M")
+  end
+
+  def vscreen
+    cur = MODULES[:vscreen][:cur].to_i
+    down = (cur == 0 ? cur : cur - 1)
+    up = (cur == 10 ? cur : cur + 1)
+    "^ca(" <<
+      "4,sh -c 'sdorfehs -c \"vselect #{up}\"'," <<
+      "5,sh -c 'sdorfehs -c \"vselect #{down}\"')" <<
+      "^fg(#{color(:disabled)})v/^fg()#{cur}^ca()"
   end
 
   # current temperature/humidity

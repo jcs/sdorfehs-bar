@@ -558,17 +558,19 @@ class Controller
       o << "^fg(#{color(:disabled)})"
     end
 
-    # clicking anywhere on "vol/XX%" will toggle mute
-    o << "^ca(1,sh -c 'sndioctl output.mute=!; pkill -USR1 i3status')"
+    o << "^ca(" <<
+      "1,sh -c '~/bin/volume mute'," <<
+      "4,sh -c '~/bin/volume up'," <<
+      "5,sh -c '~/bin/volume down')"
 
-    o << "vol^fg(#{color(:disabled)})/"
+    o << "^fg(#{color(:disabled)})vol/"
 
     if @i3status_data[:volume]["full_text"].match(/mute/)
       o << "---"
     else
       vol = @i3status_data[:volume]["full_text"].gsub(/[^0-9]/, "")
 
-      o << "#{vol}^fg(#{color(:disabled)})%"
+      o << "^fg()#{vol}^fg(#{color(:disabled)})%"
     end
 
     o << "^ca()"
@@ -855,9 +857,9 @@ class Controller
     down = (cur == 0 ? cur : cur - 1)
     up = (cur == 10 ? cur : cur + 1)
     "^ca(" <<
-      "4,sh -c 'sdorfehs -c \"vselect #{up}\"'," <<
-      "5,sh -c 'sdorfehs -c \"vselect #{down}\"')" <<
-      "^fg(#{color(:disabled)})v/^fg()#{cur}^ca()"
+      "4,sdorfehs -c 'vselect #{up}'," <<
+      "5,sdorfehs -c 'vselect #{down}')" <<
+      "^fg(#{color(:disabled)})vscr/^fg()#{cur}^ca()"
   end
 
   # current temperature/humidity

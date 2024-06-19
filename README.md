@@ -13,6 +13,9 @@ such as:
 	config[:weather_api_key] = "your-api-key-here"
 
 Install
+
+	gem install ffi
+ 
 [i3status](https://i3wm.org/i3status/)
 and
 [configure it](https://github.com/jcs/dotfiles/blob/master/.i3status.conf).

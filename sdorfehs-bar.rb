@@ -76,7 +76,7 @@ config = {
 }
 
 # override defaults by eval'ing ~/.config/sdorfehs/bar-config.rb
-if File.exists?(f = "#{ENV["HOME"]}/.config/sdorfehs/bar-config.rb")
+if File.exist?(f = "#{ENV["HOME"]}/.config/sdorfehs/bar-config.rb")
   eval(File.read(f))
 end
 
@@ -186,7 +186,7 @@ class Controller
 
     @mutex = Mutex.new
 
-    if File.exists?(@config[:fifo_path])
+    if File.exist?(@config[:fifo_path])
       File.unlink(@config[:fifo_path])
     end
     File.mkfifo(@config[:fifo_path])
@@ -203,7 +203,7 @@ class Controller
   end
 
   def run!
-    if !File.exists?("/usr/local/bin/i3status")
+    if !File.exist?("/usr/local/bin/i3status")
       STDERR.puts "i3status not found"
       exit 1
     end
